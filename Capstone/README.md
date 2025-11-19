@@ -14,11 +14,11 @@ The Capstone Project is your opportunity to apply everything you’ve learned to
 
 - Each student (or team lead) receives a **unique project** assignment.
 - You may be working **alone or with a team**, depending on class size.
-- If you're in RCET3376, you may be assigned **team members from RCET3375** and function as the **team leader**.
+- Depending on class size and project availability, you may be assigned **team members** and function as the **team leader**.
 
 ---
 
-## Team Lead Responsibilities (RCET3376)
+## Team Lead Responsibilities 
 
 If you're the team lead:
 - You’re responsible for assigning and tracking tasks for your team.
