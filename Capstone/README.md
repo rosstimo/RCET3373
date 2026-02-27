@@ -53,11 +53,11 @@ If you're the team lead:
 
 ## Grading Breakdown
 
-| Component                | Points | Frequency |
-|--------------------------|--------|-----------|
-| Weekly Progress Logs     | 100    | Divided Weekly  | 
-| Final Project Report     | 100    | Once      |
-| Final Presentation       | 100    | Once      |
+| Component                | Points | Frequency | Course |
+|--------------------------|--------|-----------|--------|
+| Weekly Progress Logs     | 100    | Divided Weekly  |Theory|
+| Final Project Report     | 200    | Once      |Theory|
+| Final Presentation       | 200    | Once      |Lab|
 
 ---
 
