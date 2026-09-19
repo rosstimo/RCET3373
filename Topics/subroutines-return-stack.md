@@ -1,38 +1,127 @@
-# RCET3373 Self-Learning Guide - Subroutines and the PIC16F883 Return Stack
+<a id="top"></a>
 
-## Goal
+# RCET 3373 — Subroutines and the PIC16F883 Return Stack
 
-You should be able to explain where a PIC16F883 subroutine returns, calculate the timing of a callable delay, determine simultaneous stack depth, and use MPLAB X Simulator to check your reasoning.
+*Self-learning guide*
 
-## 1. CALL solves the return-path problem
+[Topics index](README.md)
 
-`GOTO` loads a new Program Counter destination but does not automatically remember where execution came from.
+<a id="contents"></a>
+## Contents
 
-`CALL` transfers execution and saves the address of the instruction after the call, `PC + 1`, on the hardware return stack. `RETURN` restores the top saved address into the Program Counter.
+- [1. Why this matters](#why-this-matters)
+- [2. What you should be able to do](#learning-outcomes)
+- [3. Prerequisites and related topics](#prerequisites)
+- [4. Core model and vocabulary](#core-model)
+- [5. How it works](#how-it-works)
+- [6. Worked examples](#worked-examples)
+- [7. Apply, verify, and troubleshoot](#apply-verify-troubleshoot)
+- [8. Practice](#practice)
+- [9. Answer key](#answer-key)
+- [10. What you should be able to explain without notes](#retrieval-check)
+- [11. References](#references)
 
-A useful analogy is a **bookmark**: the saved address marks where execution resumes.
+[Back to top](#top) · [Topics index](README.md)
 
-## 2. Know the actual hardware stack
+<a id="why-this-matters"></a>
+## 1. Why this matters
 
-PIC16F883 provides:
+A subroutine lets code temporarily leave the current execution path, perform reusable work, and then return to the correct instruction automatically.
 
-```text
-8 levels × 13 bits
-hardware return-address stack
-```
+The key problem is:
 
-Rules:
+> If execution jumps somewhere else, how does the processor remember where to come back?
 
-- separate from program/data memory;
-- Stack Pointer not readable/writable by software;
-- `CALL` and interrupt entry push;
+On the PIC16F883, `CALL` and the hardware return stack solve that problem.
+
+Understanding the return stack also matters for:
+
+- nested subroutines;
+- interrupts;
+- exact timing;
+- page-crossing control flow;
+- diagnosing stack-depth bugs.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="learning-outcomes"></a>
+## 2. What you should be able to do
+
+After working through this guide, you should be able to:
+
+- explain what address `CALL` saves;
+- explain what `RETURN`, `RETLW`, and `RETFIE` restore;
+- distinguish the hardware return stack from GPR data memory;
+- calculate simultaneous stack depth;
+- include accepted interrupts in stack-depth reasoning;
+- explain the role of `PCLATH<4:3>` for `CALL`/`GOTO` page selection;
+- calculate a callable delay including `CALL` and `RETURN`;
+- use MPLAB X Simulator to verify PC/stack/control-flow reasoning;
+- recognize the PIC16F883 stack's depth and overflow limitations.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="prerequisites"></a>
+## 3. Prerequisites and related topics
+
+Before this guide, review:
+
+- [PIC16F883 program memory and vectors](pic16f883-architecture.md#program-memory);
+- [Instruction Timing and Software Delays](instruction-timing-software-delays.md#core-model).
+
+Related topics:
+
+- [Interrupts and Context Saving](interrupts-context-saving.md#core-model);
+- [Lookup Tables and Dynamic Timing](lookup-tables-dynamic-timing.md#pcl-pclath);
+- [Measurement Strategy and C Timing](measurement-c-timing.md#measurement-strategy).
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="core-model"></a>
+## 4. Core model and vocabulary
+
+<a id="call-return-model"></a>
+### `CALL` saves the return path
+
+`GOTO` changes the Program Counter but does not remember where execution came from.
+
+`CALL` does two things:
+
+1. saves the address of the instruction after the `CALL` on the hardware return stack;
+2. loads the Program Counter with the subroutine target.
+
+`RETURN` pops the most recent saved return address and resumes execution there.
+
+A useful mental model is a stack of bookmarks.
+
+<a id="hardware-stack"></a>
+### PIC16F883 hardware return stack
+
+The PIC16F883 provides an eight-level hardware return-address stack.
+
+Important properties:
+
+- stores return addresses, not general variables;
+- separate from ordinary GPR data memory;
+- `CALL` pushes;
+- accepted interrupt entry pushes;
 - `RETURN`, `RETLW`, and `RETFIE` pop;
-- ninth push overwrites the oldest entry because the stack is circular;
-- no overflow/underflow status flag.
+- software cannot use it like ordinary RAM;
+- excessive nesting can overwrite older return information because this classic stack does not provide the kind of software-visible overflow protection found on many larger processors.
 
-The Pez analogy helps with LIFO: the last return address pushed is the first one removed.
+**Official visual reference:** In Section 2.0 of the [PIC16F882/883/884/886/887 Data Sheet](https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/40001291H.pdf), inspect the program-memory/stack figure.
 
-### Sequential versus nested
+Focus on the 13-bit PC and the eight return-stack levels as structures separate from GPR data memory.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="how-it-works"></a>
+## 5. How it works
+
+<a id="nested-depth"></a>
+### Sequential calls and nested calls are different
+
+Sequential:
 
 ```asm
 call A
@@ -41,29 +130,68 @@ call A
 call A
 ```
 
-If every call returns before the next begins, maximum depth = **1**.
+If each call returns before the next one begins:
+
+```text
+maximum simultaneous stack depth = 1
+```
+
+Nested:
 
 ```text
 Main -> A -> B -> C
 ```
 
-Maximum simultaneous depth = **3**.
-
-## 3. Include interrupts in depth reasoning
-
-PIC16F883 has one interrupt vector at `0x0004` and no hardware interrupt-priority levels. Accepted interrupt service pushes a return address and clears `GIE`, so normal interrupt service does not nest another interrupt. `RETFIE` returns and restores `GIE`.
-
-## 4. PCLATH and larger programs
-
-The Program Counter is 13 bits. `CALL` and `GOTO` carry 11 destination bits; `PCLATH<4:3>` supplies the upper two. Page selection matters when targets cross 2K-word pages.
-
-## 5. Exact callable 50 us delay
-
-At 4 MHz:
+Before C returns, three return addresses are simultaneously active:
 
 ```text
-TCY = 4/FOSC = 1 us
+maximum simultaneous depth = 3
 ```
+
+Count the deepest path, not the total number of `CALL` instructions that execute over time.
+
+<a id="interrupt-depth"></a>
+### Interrupt entry also uses the return stack
+
+When an interrupt is accepted, the current return address is pushed so `RETFIE` can resume the interrupted code.
+
+The PIC16F883 has one interrupt vector and no hardware interrupt-priority levels.
+
+Normal interrupt acceptance clears `GIE`, so another ordinary interrupt is not accepted until global interrupts are enabled again.
+
+For stack planning, an accepted interrupt can add one level to whatever call depth already exists.
+
+<a id="pclath-call-goto"></a>
+### `PCLATH` and larger program-memory targets
+
+The PC is 13 bits wide, while `CALL` and `GOTO` encode only part of the destination address directly.
+
+For these instructions, `PCLATH<4:3>` supplies upper destination bits needed for page selection.
+
+That means control-flow correctness in larger programs includes both:
+
+- the encoded target field;
+- the appropriate page-selection state.
+
+Assembler helpers can manage this, but the hardware model still matters when diagnosing page-crossing problems.
+
+<a id="return-instructions"></a>
+### `RETURN`, `RETLW`, and `RETFIE`
+
+All three return using the hardware stack, but they are used for different purposes.
+
+| Instruction | Main use |
+| --- | --- |
+| `RETURN` | ordinary subroutine return |
+| `RETLW k` | return while placing literal `k` in W |
+| `RETFIE` | return from interrupt and restore interrupt-enable behavior |
+
+`RETLW` is especially useful for lookup-table patterns covered later.
+
+<a id="callable-delay"></a>
+### Callable delay timing includes `CALL` and `RETURN`
+
+For:
 
 ```asm
     call    Delay50us
@@ -77,90 +205,199 @@ loop50:
     return
 ```
 
-Define the interval from **CALL start through RETURN completion**:
+define the interval:
+
+> Start with `CALL`; end after `RETURN` completes.
+
+At 4 MHz:
 
 ```text
-CALL              2 cycles
-setup             2 cycles
-loop            3n - 1 cycles
-RETURN            2 cycles
---------------------------
-T                3n + 5 cycles
+CALL                2 cycles
+setup               2 cycles
+countdown loop    3n - 1 cycles
+RETURN              2 cycles
+----------------------------
+total              3n + 5 cycles
 ```
 
-Solve `3n + 5 = 50`: `n = 15`. At 1 us/cycle, that is exactly 50 us.
+Solve:
 
-## 6. Build 5 ms from the 50 us routine
+```text
+3n + 5 = 50
+n = 15
+```
 
-For the explicit outer routine:
+The routine is exactly 50 instruction cycles for that boundary.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="worked-examples"></a>
+## 6. Worked examples
+
+<a id="stack-depth-example"></a>
+### Worked example: stack depth with an interrupt
+
+Suppose the execution path is:
+
+```text
+Main -> A -> B
+```
+
+While B is executing, an interrupt is accepted.
+
+Before the interrupt:
+
+```text
+depth = 2
+```
+
+Interrupt entry pushes one additional return address:
+
+```text
+depth = 3
+```
+
+If the ISR does not call another subroutine, maximum depth on that path is 3.
+
+<a id="five-ms-example"></a>
+### Worked example: build a longer callable delay
+
+Suppose a longer routine repeatedly calls the exact 50 us subroutine and its explicit outer overhead gives:
 
 ```text
 T = 53N + 5
 ```
 
-Choose the largest `N` that does not exceed 5000 us:
+For a 5000 us target:
 
 ```text
-N = floor((5000 - 5)/53) = 94 = 0x5E
-T = 53(94) + 5 = 4987 us
-residual = 13 us
+N = floor((5000 - 5) / 53)
+  = 94
+
+T = 53(94) + 5
+  = 4987 us
 ```
 
-Use the one-byte setup/loop formula `3n + 1`. `n = 4` gives 13 us. Put that block before the already-counted final `RETURN` to reach exactly 5000 us.
-
-## 7. Delay time is not automatically waveform time
-
-If other instructions between output edges add 6 us:
+Residual:
 
 ```text
-measured half-period = 5006 us
-period = 10012 us
-frequency ≈ 99.88 Hz
-relative overhead = 6/5000 = 0.12%
+5000 - 4987 = 13 us
 ```
 
-The oscilloscope measures the entire path between edges.
+A one-byte delay with:
 
-## 8. Measurement resolution
+```text
+3n + 1 = 13
+n = 4
+```
 
-If one `NOP` changes the prediction by 1 us, ask whether the current instrument configuration can resolve 1 us on a multi-millisecond pulse. A displayed standard deviation is not automatically a complete uncertainty statement.
+can supply the remaining 13 us if inserted within the defined path without double-counting the final return.
 
-Record the prediction, method/settings, measurement, and whether the method has enough resolution for the claim.
+The important habit is to account for every call/return/control instruction exactly once.
 
-## 9. MPLAB X Simulator
+[Back to top](#top) · [Topics index](README.md)
 
-Useful workflow:
+<a id="apply-verify-troubleshoot"></a>
+## 7. Apply, verify, and troubleshoot
 
-1. select **Simulator** as project tool;
-2. halt at reset vector when debugging begins;
+<a id="simulator-workflow"></a>
+### Verify control flow in MPLAB X Simulator
+
+Useful checks:
+
+1. select **Simulator** as the project tool;
+2. halt at the reset/startup path;
 3. inspect Program Memory;
-4. inspect PC, W, STATUS, and SFRs;
-5. single-step;
-6. use breakpoints;
-7. edit a register such as `PORTB` and observe program behavior;
-8. inspect generated instructions around directives such as `BANKSEL`.
+4. watch the Program Counter;
+5. step across a `CALL`;
+6. verify entry into the subroutine;
+7. step through `RETURN`;
+8. confirm execution resumes at the instruction after the original `CALL`;
+9. use breakpoints to observe nested calls;
+10. inspect generated instructions around assembler directives when timing matters.
 
-Simulation supports code/register reasoning. It does not prove wiring, oscillator/probe loading, analog behavior, or other hardware-dependent claims.
+Simulation verifies code/control-flow reasoning.
 
-## 10. BANKSEL and timing
+It does not prove oscillator loading, wiring, analog behavior, or physical timing accuracy.
 
-`BANKSEL symbol` is an assembler directive that emits bank-selection instructions. In timing-critical code, inspect the listing/disassembly and count what was actually emitted rather than assigning a universal one-cycle cost.
+<a id="stack-debug-checklist"></a>
+### Return-path debugging checklist
 
-## Review questions
+If a program returns to the wrong place or behaves unpredictably:
+
+1. trace the deepest nested call path;
+2. include possible interrupt entry;
+3. inspect whether an ISR itself calls subroutines;
+4. check for unmatched `CALL`/return logic;
+5. inspect page selection for far `CALL`/`GOTO` targets;
+6. verify computed-GOTO/table code has not corrupted PC-related state;
+7. use Simulator to observe PC progression.
+
+For timing claims, also use [Measurement Strategy and C Timing](measurement-c-timing.md#measurement-strategy).
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="practice"></a>
+## 8. Practice
 
 1. What address does `CALL` save?
 2. What does `RETURN` restore?
-3. How deep is the PIC16F883 return stack?
-4. Why can four sequential calls have depth 1 while three nested calls have depth 3?
-5. Does PIC16F883 have hardware interrupt priorities?
-6. Why must `CALL` and `RETURN` appear in an exact subroutine timing equation?
-7. Why is `n = 15` exact for the shown 50 us routine?
-8. Why can a 5000 us routine produce a 5006 us measured half-period?
-9. What should you inspect before timing `BANKSEL`?
-10. What simulator conclusions still need hardware verification?
+3. How deep is the PIC16F883 hardware return stack?
+4. Why can four sequential calls have maximum depth 1?
+5. For `Main -> A -> B -> C`, what is the maximum call depth before any returns?
+6. If an interrupt is accepted while depth is 3, what stack depth is reached before any ISR calls?
+7. Which `PCLATH` bits contribute upper destination information for `CALL`/`GOTO`?
+8. Why must `CALL` and `RETURN` be included in an exact callable-delay timing equation?
+9. Why is `n = 15` correct for the shown 50-cycle routine?
+10. What can Simulator prove, and what still requires hardware verification?
 
-## Official references
+[Back to top](#top) · [Topics index](README.md)
 
-- https://ww1.microchip.com/downloads/en/devicedoc/41291e.pdf
-- https://ww1.microchip.com/downloads/en/DeviceDoc/33023a.pdf
-- https://onlinedocs.microchip.com/oxy/GUID-4DC87671-9D8E-428A-ADFE-98D694F9F089-en-US-5/index.html
+<a id="answer-key"></a>
+## 9. Answer key
+
+1. The address of the instruction after the `CALL`.
+2. The most recently saved return address from the hardware stack.
+3. Eight levels.
+4. Each call returns before the next begins, so only one return address is active at a time.
+5. Three.
+6. Four; interrupt entry pushes one additional return address.
+7. `PCLATH<4:3>`.
+8. They execute inside the defined boundary and consume documented instruction cycles.
+9. `3(15) + 5 = 50`.
+10. Simulator can verify instruction/control/register behavior; physical oscillator, wiring, loading, and analog/hardware timing still need real hardware evidence.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="retrieval-check"></a>
+## 10. What you should be able to explain without notes
+
+You should be able to:
+
+- explain the saved return address for `CALL`;
+- distinguish return stack from GPR RAM;
+- calculate simultaneous stack depth;
+- include interrupt entry in depth reasoning;
+- explain the roles of `RETURN`, `RETLW`, and `RETFIE`;
+- explain why page selection matters for larger `CALL`/`GOTO` targets;
+- derive the `3n + 5` callable-delay expression;
+- verify a call/return path in Simulator.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="references"></a>
+## 11. References
+
+- Microchip Technology Inc., *PIC16F882/883/884/886/887 Data Sheet*, DS40001291H, Memory Organization and Instruction Set Summary — https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/40001291H.pdf
+  - Used for: PC width, eight-level return stack, `CALL`, `RETURN`, `RETLW`, `RETFIE`, and cycle counts.
+
+- Microchip Technology Inc., *PICmicro Mid-Range MCU Family Reference Manual*, DS33023A — https://ww1.microchip.com/downloads/en/DeviceDoc/33023A.pdf
+  - Used for: program-counter, stack, paging, and control-flow architecture.
+
+- [PIC16F883 Subroutines and Stack](https://github.com/rosstimo/pic_projects/blob/main/References/PIC16F883-Subroutines-Stack.md)
+  - RCET shared implementation/reference material for call/return, stack depth, and timing examples.
+
+- Microchip Technology Inc., *MPLAB X IDE* — https://www.microchip.com/en-us/development-tool/MPLAB-X-IDE
+  - Used for: simulator/debug environment context.
+
+[Back to top](#top) · [Topics index](README.md)
