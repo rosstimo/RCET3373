@@ -1,253 +1,447 @@
-# RCET 3373 Computer Memory - Self-Learning Guide
+<a id="top"></a>
 
-*RCET 3373 student guide: concepts, worked examples, practice, and answer key*
+# RCET 3373 — Memory Systems
 
-**Fall 2026 • Tim Rossiter • Idaho State University**
+*Self-learning guide*
 
-Use this guide to learn or review the memory lesson without the lecture. The goal is not to memorize a list of memory types. You should be able to reason from the address/data/control interface, explain why different storage cells behave differently, and solve basic memory-organization problems.
+[Topics index](README.md)
 
-# What you should be able to do
+<a id="contents"></a>
+## Contents
 
-- Read notation such as 4K × 8 and determine address lines, data lines, and total storage.
+- [1. Why this matters](#why-this-matters)
+- [2. What you should be able to do](#learning-outcomes)
+- [3. Prerequisites and related topics](#prerequisites)
+- [4. Core model and vocabulary](#core-model)
+- [5. How it works](#how-it-works)
+- [6. Worked examples](#worked-examples)
+- [7. Apply, verify, and troubleshoot](#apply-verify-troubleshoot)
+- [8. Practice](#practice)
+- [9. Answer key](#answer-key)
+- [10. What you should be able to explain without notes](#retrieval-check)
+- [11. References](#references)
 
-- Explain a memory read and write as bus transactions.
+[Back to top](#top) · [Topics index](README.md)
 
-- Explain the purpose of chip select, output enable, write enable, and high-impedance outputs.
+<a id="why-this-matters"></a>
+## 1. Why this matters
 
-- Compare SRAM and DRAM from the physical storage cell.
+Memory is not one technology.
 
-- Explain why DRAM requires refresh and why it multiplexes addresses.
+Computer and embedded systems use different kinds of storage because the design goals conflict:
 
-- Distinguish PROM, EPROM, EEPROM, and Flash by how their contents can be changed.
+- fast access;
+- low cost per bit;
+- high density;
+- nonvolatile retention;
+- frequent rewriting;
+- simple interfaces;
+- low power.
 
-- Recognize two different ways to expand a memory system.
+The useful skill is not memorizing a list of memory names. It is being able to reason from:
 
-# 1. Start with the system, not the memory type
+1. how locations are addressed;
+2. how data moves during reads and writes;
+3. how the storage cell preserves a bit;
+4. what timing/control requirements follow from that mechanism;
+5. what tradeoffs make one memory type useful for a particular job.
 
-A processor does not ask memory for "the variable" or "the instruction." At the hardware interface it supplies a binary address that identifies a location. It then uses control signals to say whether the operation is a read or a write. The data bus carries the word stored at that location.
+[Back to top](#top) · [Topics index](README.md)
 
-**Address bus:** Identifies which location is being accessed.
+<a id="learning-outcomes"></a>
+## 2. What you should be able to do
 
-**Data bus:** Carries the contents. It is normally bidirectional.
+After working through this guide, you should be able to:
 
-**Control bus:** Carries read/write, enable, and timing-related signals.
+- interpret organization notation such as `4K × 8`;
+- determine address bits, data width, and total capacity;
+- explain conceptual memory read and write transactions;
+- explain why shared data buses use high-impedance outputs;
+- compare SRAM and DRAM from their storage mechanisms;
+- explain why DRAM requires refresh and commonly uses row/column addressing;
+- distinguish MROM, PROM, EPROM, EEPROM, and Flash by how contents are changed;
+- distinguish expansion for greater word width from expansion for more locations;
+- connect general memory concepts to the PIC16F883 memory map.
 
-| **Key idea:** During a read, memory drives the data bus. During a write, the CPU or other bus master drives the data bus. The address still comes from the device requesting the memory operation. |
-|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+[Back to top](#top) · [Topics index](README.md)
 
-# 2. Memory capacity and addresses
+<a id="prerequisites"></a>
+## 3. Prerequisites and related topics
 
-Memory is commonly described as number of words × bits per word. For example, 4K × 8 means 4096 addressable locations, with eight bits stored at each location. Because 4096 = 2^12, the device needs 12 address bits. Because each word is eight bits, it needs eight data bits for a parallel interface.
+Before this guide, review:
 
-<img src="student-guide-media/media/image1.png" style="width:3in;height:2.59144in" />
+- [Address, Data, and Control Buses](buses-adc-dac.md#core-model);
+- [Digital Timing](digital-timing.md#core-model).
 
-*Figure: 16 locations, each containing an 8-bit word. Source: Kleitz, Chapter 16, Figure 16-1.*
+Related topics:
 
-## Worked example A: 32K × 8
+- [PIC16F883 Architecture](pic16f883-architecture.md#data-memory);
+- [Data Memory, SFRs, and Banking](data-memory-sfrs-banking.md#core-model);
+- later persistent-storage work with EEPROM.
 
-1.  32K = 32 × 1024 = 32768 locations.
+[Back to top](#top) · [Topics index](README.md)
 
-2.  32768 = 2^15, so 15 address lines are required.
+<a id="core-model"></a>
+## 4. Core model and vocabulary
 
-3.  The word width is eight bits, so there are eight data bits.
+<a id="organization"></a>
+### Memory organization
 
-4.  32768 × 8 bits = 262144 bits = 32768 bytes = 32 KiB.
+Memory is often described as:
 
-## Worked example B: 8K × 16
+```text
+number of locations × bits per location
+```
 
-5.  8K = 8192 = 2^13 locations → 13 address lines.
+Example:
 
-6.  Each location contains 16 bits → 16 data bits.
+```text
+4K × 8
+```
 
-7.  16 bits = two bytes per word, so 8192 × 2 = 16384 bytes = 16 KiB.
+means:
 
-| **Rule:** N address lines can select 2^N unique locations. The word width determines how many data bits are transferred for each selected address. |
-|----------------------------------------------------------------------------------------------------------------------------------------------------|
+- 4096 addressable locations;
+- 8 bits stored at each location;
+- 12 address bits because `4096 = 2^12`;
+- 8 data bits for a parallel word transfer.
 
-# 3. Read and write transactions
+<a id="transactions"></a>
+### Read and write transactions
 
-## Read
+A conceptual read:
 
-8.  The CPU places the desired binary address on the address bus.
+```text
+address -> select/read controls -> memory drives data -> receiver captures data
+```
 
-9.  The CPU activates the appropriate chip-select/read/output-enable controls.
+A conceptual write:
 
-10. The memory decodes the address and selects one internal word.
+```text
+address + new data -> select/write controls -> memory stores data
+```
 
-11. After the device access time, valid data appear on the data bus.
+<a id="volatile-nonvolatile"></a>
+### Volatile and nonvolatile
 
-12. The CPU captures the data while it is valid.
+**Volatile** memory loses its stored state when operating power is removed.
 
-## Write
+**Nonvolatile** memory retains information without normal operating power.
 
-13. The CPU places the destination address on the address bus.
+These terms describe retention, not speed.
 
-14. The CPU places the new word on the data bus.
+[Back to top](#top) · [Topics index](README.md)
 
-15. The write and chip-select controls are activated.
+<a id="how-it-works"></a>
+## 5. How it works
 
-16. The memory stores the input data in the selected location.
+<a id="parallel-read-write"></a>
+### Parallel memory interface
 
-17. Address and data remain valid long enough to satisfy setup and hold requirements.
+A basic parallel memory device uses some combination of:
 
-| **High impedance:** When a memory chip is not selected, its output drivers normally disconnect from the shared data bus. This Hi-Z state prevents multiple devices from fighting over the same wires. |
-|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+- address pins;
+- data pins;
+- chip select/enable;
+- output enable/read controls;
+- write enable;
+- timing requirements.
 
-# 4. Nonvolatile memory: keeping information without power
+When the device is not selected, its data outputs commonly enter **high impedance (Hi-Z)** so several devices can share a bus.
 
-The ROM family is best understood as a progression in how easily stored information can be created, erased, and rewritten.
+<a id="nonvolatile-family"></a>
+### Nonvolatile memory family
 
-| **Type** | **How contents are created/changed** | **Practical idea**                                  |
-|----------|--------------------------------------|-----------------------------------------------------|
-| MROM     | Programmed during manufacturing      | Not normally changed                                |
-| PROM     | Programmed by user once              | No erase                                            |
-| EPROM    | User programmable                    | Whole chip erased with UV light                     |
-| EEPROM   | Electrical in-circuit rewrite        | Fine-grained updates                                |
-| Flash    | Electrical in-circuit rewrite        | Erase/program organized in larger blocks or sectors |
+| Type | How contents are created/changed | Practical idea |
+| --- | --- | --- |
+| Mask ROM | Programmed during manufacturing | Fixed production content |
+| PROM | User-programmed once | One-time programmable |
+| EPROM | Electrically programmed, UV erased | Whole-device erase |
+| EEPROM | Electrically rewritten in circuit | Fine-grained persistent updates |
+| Flash | Electrically rewritten | Erase/program organized in larger units |
 
-In embedded systems, nonvolatile memory is valuable for program code, boot information, calibration data, configuration, and values that must survive a power cycle. Different jobs may use different nonvolatile technologies.
+The exact erase/program granularity and endurance are device-specific.
 
-# 5. SRAM: a bit stored as a bistable state
+<a id="sram"></a>
+### SRAM: bistable storage
 
-Static RAM uses a latch-like transistor circuit to store each bit. Once a 0 or 1 is written, the cross-coupled circuit reinforces that state as long as power is present. No periodic refresh is required. That is what static means.
+Static RAM stores a bit using a bistable/latch-like transistor structure.
 
-<img src="student-guide-media/media/image2.png" style="width:3.4in;height:3.13569in" />
+As long as power remains valid, the circuit reinforces its state without periodic refresh.
 
-*Simplified SRAM cell. Source: Kleitz, Chapter 16, Figure 16-5(c).*
+That is why it is **static**.
 
-| **Do not confuse the terms:** SRAM is static but volatile. It does not need refresh while powered, but ordinary SRAM loses its contents when power is removed. |
-|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+SRAM is still normally **volatile**.
 
-# 6. SRAM timing
+<a id="sram-timing"></a>
+### SRAM timing still matters
 
-A valid address does not instantly produce valid output data. Internal decoding and switching take time. Data sheets show this with timing diagrams. During a read, access time describes the delay between a valid request and valid output data. During a write, setup and hold intervals tell you how long address and data must remain stable around the active write event.
+A valid address does not instantly create valid output data.
 
-<img src="student-guide-media/media/image3.png" style="width:4.25in;height:6.13636in" />
+Real SRAM specifications include quantities such as:
 
-*Typical SRAM read/write timing. Source: Tocci, Chapter 12, Figure 12-22.*
+- address access time;
+- output-enable delay;
+- read/write cycle time;
+- write-pulse width;
+- data setup/hold;
+- high-impedance transition timing.
 
-# 7. DRAM: a bit stored as capacitor charge
+**Official visual reference:** Infineon's [CY7C1338G SRAM data sheet](https://www.infineon.com/assets/row/public/documents/10/49/infineon-cy7c1338g-4-mbit-128-k-32-flow-through-sync-sram-datasheet-en.pdf), Figure 5, **Read/Write Timing**, is a useful example of how a manufacturer relates address, control, data, and Hi-Z behavior.
 
-Dynamic RAM uses a much smaller storage cell: an access transistor and a capacitor. A charged capacitor represents one logic state and a discharged capacitor represents the other. The simplicity of the cell allows high density and low cost per bit, but the charge leaks away.
+Focus on the timing arrows between address/control events and valid data, not on memorizing that particular SRAM's numeric values.
 
-<img src="student-guide-media/media/image4.png" style="width:4in;height:2.24422in" />
+<a id="dram"></a>
+### DRAM: capacitor-based storage
 
-*Simplified DRAM cell. Source: Kleitz, Chapter 16, Figure 16-9.*
+Dynamic RAM commonly stores each bit using a small capacitor plus an access transistor.
 
-## Refresh
+The capacitor charge leaks with time, so stored information must be periodically restored.
 
-Because capacitor voltage decays, DRAM rows must be refreshed periodically. Refresh reads/restores stored state before the voltage becomes too small to interpret reliably. Modern memory controllers schedule this maintenance automatically.
+That maintenance operation is **refresh**.
 
-## Address multiplexing
+DRAM achieves very high density because the storage cell is compact, but the system pays for that density with refresh and more complicated access/control behavior.
 
-Large DRAMs would require many package pins if every address bit had a dedicated pin. A common solution is to reuse the address pins. First the row portion of the address is presented and latched. Then the column portion is presented on the same physical pins and latched. RAS and CAS are control strobes associated with these two phases. The tradeoff is fewer pins in exchange for more sequencing and latency.
+<a id="dram-row-column"></a>
+### Rows, columns, and address multiplexing
 
-<img src="student-guide-media/media/image5.png" style="width:3in;height:4.92697in" />
+DRAM arrays are organized by rows and columns.
 
-*Address multiplexing concept. Source: Tocci, Chapter 12, Figure 12-28.*
+Historically and in modern forms, row/column organization helps large memories select storage efficiently. Many DRAM interfaces reuse address/command resources across phases rather than dedicating a separate package pin to every internal address dimension.
 
-# 8. SRAM and DRAM comparison
+Conceptually:
 
-| **Property**           | **SRAM**                  | **DRAM**                      |
-|------------------------|---------------------------|-------------------------------|
-| Cell                   | Bistable/latch-like       | Capacitor + transistor        |
-| Refresh                | No                        | Yes                           |
-| Density                | Lower                     | Higher                        |
-| Cost per bit           | Higher                    | Lower                         |
-| General speed tendency | Faster                    | More latency/control overhead |
-| Typical use            | Cache, small fast buffers | Large main memory             |
+```text
+select/open row -> select column -> transfer data
+```
 
-# 9. Expanding memory
+Modern DRAM protocols are much more elaborate than early RAS/CAS examples, but the row/column mental model remains useful.
 
-## Increase word width
+<a id="sram-dram-comparison"></a>
+### SRAM and DRAM comparison
 
-Suppose you need 16 × 8 memory but only have 16 × 4 chips. Use two chips in parallel. Both receive the same address and control signals. One supplies four data bits and the other supplies the other four. The number of addresses stays 16; the word becomes wider.
+| Property | SRAM | DRAM |
+| --- | --- | --- |
+| Basic storage idea | Bistable/latch-like state | Capacitor charge |
+| Refresh | No periodic refresh | Required |
+| Density | Lower | Higher |
+| Cost per bit | Higher | Lower |
+| Control complexity | Lower | Higher |
+| Common system role | Cache, small fast buffers | Large main memory |
 
-## Increase the number of locations
+<a id="memory-expansion"></a>
+### Memory expansion
 
-Suppose you need 32 × 8 memory but only have 16 × 8 chips. Use two banks. The lower address bits select a location inside both chips, while an additional high-order address bit or decoder selects which chip is active. The word width stays eight bits; the number of addresses increases.
+There are two different expansion problems.
 
-| **Ask yourself first:** Am I trying to add bits to each word, or am I trying to add more addressable words? That determines the wiring strategy. |
-|--------------------------------------------------------------------------------------------------------------------------------------------------|
+**Increase word width**
 
-# 10. What this means for a microcontroller
+If you need `16 × 8` but only have `16 × 4` devices, use two devices in parallel:
 
-When you open the PIC data sheet, the same ideas will appear under device-specific names and memory maps. Look for program memory that stores instructions, data memory used for working values, register and special-function-register regions, and any nonvolatile data storage. Treat every map as an address problem: what addresses exist, what lives at them, and what kind of read/write behavior does each region have?
+- share address/control;
+- one device supplies part of the data word;
+- the other supplies the remaining bits.
 
-# Practice problems
+**Increase number of locations**
 
-1. A memory is organized as 64K × 8. How many address lines and data lines are required? What is the total capacity in bytes?
+If you need `32 × 8` but only have `16 × 8` devices:
 
-2. A memory is organized as 2K × 16. How many address lines are required? What is its capacity in bytes?
+- share the low-order address lines;
+- use an additional high-order address bit or decoder to select the active bank.
 
-3. During a memory read, which device drives the data bus?
+Ask first:
 
+> Do I need more bits per word, or more addressable words?
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="worked-examples"></a>
+## 6. Worked examples
+
+<a id="32k8-example"></a>
+### Worked example: 32K × 8
+
+**Known**
+
+```text
+32K × 8
+```
+
+**Find**
+
+Address bits, data bits, and capacity.
+
+**Reasoning**
+
+```text
+32K = 32768 = 2^15
+```
+
+Therefore 15 address bits are required.
+
+Each location contains 8 bits.
+
+```text
+32768 × 8 bits = 32768 bytes = 32 KiB
+```
+
+**Result**
+
+- 15 address bits;
+- 8 data bits;
+- 32 KiB capacity.
+
+<a id="8k16-example"></a>
+### Worked example: 8K × 16
+
+```text
+8K = 8192 = 2^13
+```
+
+Therefore 13 address bits are required.
+
+Each word is 16 bits = 2 bytes.
+
+```text
+8192 × 2 bytes = 16384 bytes = 16 KiB
+```
+
+<a id="expansion-example"></a>
+### Worked example: build 1K × 8 from 1K × 4 parts
+
+Two devices are required.
+
+Both receive the same address and control signals.
+
+One device connects to four data bits; the other connects to the other four.
+
+The number of locations remains 1K. The word width doubles from four to eight bits.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="apply-verify-troubleshoot"></a>
+## 7. Apply, verify, and troubleshoot
+
+<a id="memory-datasheet-checklist"></a>
+### Memory data-sheet checklist
+
+When approaching an unfamiliar memory device, identify:
+
+1. organization: locations × word width;
+2. address pins or command/address mechanism;
+3. data width;
+4. read controls;
+5. write controls;
+6. chip-select/enable behavior;
+7. Hi-Z behavior;
+8. read/write timing;
+9. power and retention requirements;
+10. nonvolatile erase/program limits when applicable.
+
+<a id="pic-connection"></a>
+### What this means for the PIC16F883
+
+The PIC16F883 contains several logically different memory regions.
+
+Use the [PIC16F883 Architecture guide](pic16f883-architecture.md#memory-spaces) to distinguish:
+
+- program memory;
+- data memory;
+- special-function registers;
+- general-purpose RAM;
+- nonvolatile data EEPROM.
+
+The general memory questions still apply:
+
+- What addresses exist?
+- What is stored there?
+- What mechanism reads/writes it?
+- Is it volatile?
+- Does access have special timing or sequencing requirements?
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="practice"></a>
+## 8. Practice
+
+1. A memory is organized as `64K × 8`. How many address bits and data bits are required? What is the total capacity in bytes?
+2. A memory is organized as `2K × 16`. How many address bits are required? What is the capacity in bytes?
+3. During a basic memory read, which device drives the data bus?
 4. Why do memory outputs use a high-impedance state?
+5. Why is SRAM called static even though it is volatile?
+6. What physical storage idea makes DRAM refresh necessary?
+7. Why do DRAM systems use row/column organization?
+8. What practical distinction separates EEPROM from Flash in the introductory model?
+9. How many `1K × 4` devices are required to build `1K × 8`?
+10. How many `1K × 8` devices are required to build `4K × 8`?
+11. In question 10, what additional function is needed so only one bank responds?
+12. A memory has 256 rows and 256 columns of one-bit cells. How many cells exist?
 
-5. Explain why SRAM is called static even though it is volatile.
+[Back to top](#top) · [Topics index](README.md)
 
-6. What physical element in a DRAM cell makes refresh necessary?
+<a id="answer-key"></a>
+## 9. Answer key
 
-7. Why are DRAM addresses often multiplexed?
+1. `64K = 2^16`: 16 address bits, 8 data bits, 65,536 bytes = 64 KiB.
+2. `2K = 2^11`: 11 address bits. With 16-bit words, total capacity is 4096 bytes = 4 KiB.
+3. The selected memory device drives the data during a read.
+4. Hi-Z disconnects inactive outputs so devices can share the bus without contention.
+5. Its cell maintains state without periodic refresh while power is present; loss of power still destroys the stored state.
+6. Charge stored on a small capacitor leaks with time.
+7. It efficiently organizes very large arrays and supports staged selection of storage.
+8. EEPROM is commonly used for finer-grained electrical updates; Flash commonly erases/programs larger blocks or sectors. Exact behavior is device-specific.
+9. Two devices in parallel.
+10. Four devices/banks.
+11. High-order address decoding/chip selection.
+12. `256 × 256 = 65,536` one-bit cells.
 
-8. What do RAS and CAS accomplish conceptually?
+[Back to top](#top) · [Topics index](README.md)
 
-9. What is the practical difference between EEPROM and Flash emphasized in this lesson?
+<a id="retrieval-check"></a>
+## 10. What you should be able to explain without notes
 
-10. You have 1K × 4 RAM chips. How many are required to make 1K × 8? Describe the address/control wiring.
+You should be able to:
 
-11. You have 1K × 8 RAM chips. How many are required to make 4K × 8? What additional function is needed to select the active chip?
+- interpret `locations × word width` notation;
+- calculate address bits and total capacity;
+- describe a complete read and write transaction;
+- explain why Hi-Z matters;
+- explain why SRAM is static but volatile;
+- explain why DRAM refresh exists;
+- compare SRAM and DRAM from their storage mechanisms;
+- distinguish common nonvolatile-memory families;
+- distinguish word-width expansion from address-space expansion;
+- connect the general model to PIC16F883 memory spaces.
 
-12. A DRAM array has 256 rows and 256 columns of one-bit cells. How many total cells does it contain, and how many address bits identify one cell?
+[Back to top](#top) · [Topics index](README.md)
 
-# Answer key
+<a id="references"></a>
+## 11. References
 
-1. 64K = 2^16 → 16 address lines; eight data lines; 65,536 bytes = 64 KiB.
+- Microchip Technology Inc., *PIC16F882/883/884/886/887 Data Sheet*, DS40001291H, Memory Organization and Data EEPROM chapters — https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/40001291H.pdf
+  - Used for: PIC16F883 program/data/nonvolatile-memory application context.
 
-2. 2K = 2048 = 2^11 → 11 address lines. Each word is two bytes → 4096 bytes = 4 KiB.
+- Microchip Technology Inc., *PICmicro Mid-Range MCU Family Reference Manual*, DS33023A, Memory Organization material — https://ww1.microchip.com/downloads/en/DeviceDoc/33023A.pdf
+  - Used for: embedded memory organization and address/data/control context.
 
-3. The selected memory device drives the data bus during a read.
+- Microchip Technology Inc., *Using SRAM with a PIC16CXX*, TB011 — https://www.microchip.com/en-us/application-notes/tb011
+  - Used for: supplemental external-SRAM/address-data-control example.
 
-4. Hi-Z disconnects inactive outputs so multiple devices can share the same bus without contention.
+- Infineon Technologies, *CY7C1338G 4-Mbit Flow-Through Sync SRAM Data Sheet*, Figure 5 "Read/Write Timing" — https://www.infineon.com/assets/row/public/documents/10/49/infineon-cy7c1338g-4-mbit-128-k-32-flow-through-sync-sram-datasheet-en.pdf
+  - Used for: official example of address/control/data timing and Hi-Z transitions in a real SRAM.
 
-5. Its cell maintains state without periodic refresh while power is applied. Removing power still destroys the state.
+- Micron Technology, *DDR5 SDRAM* — https://www.micron.com/products/memory/dram-components/ddr5-sdram
+  - Used for: modern DRAM context including banks, command/address behavior, and refresh operations.
 
-6. The storage capacitor leaks charge with time.
+### Further reading
 
-7. To reduce package pin count and board routing by reusing the same pins for row and column portions of the address.
+- Wikipedia, *Static random-access memory* — https://en.wikipedia.org/wiki/Static_random-access_memory
+  - Supplemental SRAM cell diagrams and overview.
 
-8. They latch/select the row and column address phases in the DRAM access sequence.
+- Wikipedia, *Dynamic random-access memory* — https://en.wikipedia.org/wiki/Dynamic_random-access_memory
+  - Supplemental DRAM cell, row/column, and refresh diagrams.
 
-9. EEPROM supports finer-grained electrical updates; Flash is organized around larger erase/program units such as blocks or sectors.
+- Kleitz, *Digital Electronics: A Practical Approach*, Chapter 16; Tocci et al., memory chapter; Maini, *Digital Electronics*, memory chapter.
+  - Course-supplied secondary references used in the inherited lesson; useful for additional diagrams and examples.
 
-10. Two chips. Both share the same address and control lines. One connects to four data bits and the other to the other four.
-
-11. Four chips. Lower address lines are shared; high-order address bits feed chip-select decoding so only one bank is active.
-
-12. 256 × 256 = 65,536 cells = 64K × 1. Since 65,536 = 2^16, a full cell address is 16 bits.
-
-# What to be able to explain without notes
-
-- A complete read transaction
-
-- A complete write transaction
-
-- Why 4K locations require 12 address bits
-
-- Why SRAM is static but volatile
-
-- Why DRAM refresh exists
-
-- Why DRAM multiplexes addresses
-
-- Why tri-state outputs matter
-
-- The difference between word-width expansion and capacity expansion
-
-# References used to build this guide
-
-- Kleitz, Digital Electronics: A Practical Approach, Chapter 16 (supplied course reference).
-
-- Tocci et al., Memory Devices, Chapter 12 (supplied course reference).
-
-- Maini, Digital Electronics: Principles, Devices and Applications, Chapter 15 (supplied course reference).
+[Back to top](#top) · [Topics index](README.md)
