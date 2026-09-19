@@ -1,186 +1,81 @@
-# RCET3373 - Software Delays and Nested Loops - Self-Learning Guide
+<a id="top"></a>
 
-# What you should be able to do
+# RCET 3373 — Nested-Loop Software Delays
+
+*Self-learning guide*
+
+[Topics index](README.md)
+
+<a id="contents"></a>
+## Contents
+
+- [1. Why this matters](#why-this-matters)
+- [2. What you should be able to do](#learning-outcomes)
+- [3. Prerequisites and related topics](#prerequisites)
+- [4. Core model and vocabulary](#core-model)
+- [5. How it works](#how-it-works)
+- [6. Worked examples](#worked-examples)
+- [7. Apply, verify, and troubleshoot](#apply-verify-troubleshoot)
+- [8. Practice](#practice)
+- [9. Answer key](#answer-key)
+- [10. What you should be able to explain without notes](#retrieval-check)
+- [11. References](#references)
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="why-this-matters"></a>
+## 1. Why this matters
+
+A single 8-bit countdown can only create a limited blocking delay.
+
+Nested loops extend that range by repeating an entire inner delay for every outer-loop pass.
+
+The important lesson is not to memorize one equation. It is to learn how to derive timing **inside out** from the exact code path.
+
+That same habit applies later to:
+
+- callable delay routines;
+- lookup-table paths;
+- interrupt latency;
+- state-machine timing;
+- timer service code.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="learning-outcomes"></a>
+## 2. What you should be able to do
 
 After working through this guide, you should be able to:
 
-- convert a PIC oscillator frequency into instruction-cycle time;
-- trace `DECFSZ` correctly through its final skip;
-- calculate a one-byte software delay;
-- explain why a loaded zero can represent 256 loop iterations;
-- calculate a two-counter nested delay from the code path;
-- determine the timing step caused by changing either counter;
-- choose counter values for a target delay;
-- explain why direct read-modify-write operations on `PORTB` require care.
+- derive a two-counter nested delay from explicit code;
+- account for the final `DECFSZ` skip in both loops;
+- explain why each outer iteration reloads and executes the complete inner loop;
+- calculate minimum and maximum delay;
+- calculate the timing step caused by changing either counter;
+- solve for counter values near a target delay;
+- explain why equal inner/outer counts produce quadratic growth;
+- recognize when software delay loops should give way to hardware timers.
 
-# 1. Start with the clock
+[Back to top](#top) · [Topics index](README.md)
 
-The PIC16F883 classic mid-range core divides the oscillator by four for instruction timing.
+<a id="prerequisites"></a>
+## 3. Prerequisites and related topics
 
-```text
-TCY = 4 / FOSC
-```
+Before this guide, review:
 
-For the 4 MHz crystal used in class:
+- [Instruction Timing and Software Delays](instruction-timing-software-delays.md#single-delay);
+- [timing-boundary discipline](instruction-timing-software-delays.md#timing-boundary).
 
-```text
-FOSC = 4,000,000 Hz
-TOSC = 1 / FOSC = 250 ns
-TCY  = 4 * 250 ns = 1 us
-```
+Related topics:
 
-That makes the first timing exercises convenient: one instruction cycle corresponds to one microsecond.
+- [Subroutines and Return Stack](subroutines-return-stack.md#callable-delay);
+- [PIC16F883 Timers](timers.md#core-model);
+- [PORTB read-modify-write behavior](digital-io-portb-configuration.md#read-modify-write).
 
-Do not assume this remains true if the oscillator changes. The cycle-count algebra remains the same, but the time represented by each cycle changes.
+[Back to top](#top) · [Topics index](README.md)
 
-# 2. `DECFSZ` does not take the same time on every pass
-
-Consider:
-
-```asm
-    decfsz  count, F
-    goto    delay
-```
-
-For a normal iteration where the decremented result is not zero:
-
-```text
-DECFSZ = 1 cycle
-GOTO   = 2 cycles
-total  = 3 cycles
-```
-
-When the decrement produces zero, `DECFSZ` skips the following instruction. Microchip documents this as a two-cycle `DECFSZ` because the already-fetched next instruction is discarded and a NOP occupies the second cycle.
-
-So the final pass is:
-
-```text
-DECFSZ successful skip = 2 cycles
-GOTO                    = skipped
-```
-
-This final-path difference is the source of many off-by-one timing errors.
-
-# 3. A one-byte delay
-
-Use this code:
-
-```asm
-count   EQU     0x20
-
-    movlw   n
-    movwf   count
-
-delay:
-    decfsz  count, F
-    goto    delay
-```
-
-Define the timed interval from the first `MOVLW` through completion of the final successful `DECFSZ`.
-
-The two setup instructions cost two cycles.
-
-For `n` effective loop iterations:
-
-```text
-first n-1 iterations = 3(n-1)
-final iteration       = 2
-setup                 = 2
-```
-
-Therefore:
-
-```text
-Tsingle = 2 + 3(n-1) + 2
-        = 3n + 1 cycles
-```
-
-## Worked example: n = 10
-
-```text
-T = 3(10) + 1
-  = 31 cycles
-```
-
-At 4 MHz:
-
-```text
-T = 31 us
-```
-
-# 4. Why `0x00` means 256 effective decrements
-
-An 8-bit register contains values from `0x00` through `0xFF`.
-
-If the counter begins at `0x00`, the first decrement wraps it to `0xFF`. It then continues downward until a later decrement produces `0x00` again. That zero-result decrement is the one that causes the skip.
-
-For this countdown structure, use:
-
-```text
-loaded 0x01 -> 1 effective decrement
-loaded 0x02 -> 2 effective decrements
-...
-loaded 0xFF -> 255 effective decrements
-loaded 0x00 -> 256 effective decrements
-```
-
-For the one-byte delay:
-
-```text
-Tmax = 3(256) + 1
-     = 769 cycles
-     = 769 us at 4 MHz
-```
-
-# 5. Timing boundaries matter
-
-A function name or label does not define what the oscilloscope measures.
-
-Suppose RB0 changes state, then the program runs a delay, does some other work, and later changes RB0 again. The measured pulse width includes every executed instruction between those two output changes.
-
-Before doing arithmetic, write the boundary in words.
-
-Example:
-
-> Timing begins immediately after RB0 changes state and ends at the next RB0 state change.
-
-Then count only instructions that execute inside that interval.
-
-A useful bookkeeping model is:
-
-```text
-Ttotal = Tuseful_work + Tdelay_setup + Tdelay_loop + Tbranching
-```
-
-# 6. Toggling one bit with XOR
-
-The XOR identities are:
-
-```text
-x XOR 0 = x
-x XOR 1 = NOT x
-```
-
-A mask with one `1` bit can therefore toggle a selected read bit.
-
-For RB0:
-
-```text
-mask = 0000 0001
-```
-
-Conceptually:
-
-```asm
-    movlw   b'00000001'
-    xorwf   PORTB, F
-```
-
-The Boolean reasoning is correct, but there is a hardware warning. The PIC16F883 data sheet says writes to PORT registers are read-modify-write operations. Reading `PORTB` reads actual pin states. If a pin state differs from the output latch value because of loading, analog configuration, or mixed input/output use, the write-back can unintentionally alter another output latch bit.
-
-For a simple classroom waveform on a known configuration, direct XOR is useful. For a general design, maintain the intended output byte in a GPR shadow register and write the complete intended value to the port.
-
-# 7. Build a nested delay from the code, not from a shortcut
+<a id="core-model"></a>
+## 4. Core model and vocabulary
 
 Use two counters:
 
@@ -207,20 +102,45 @@ The key structural fact is:
 
 > Every outer iteration reloads and runs the complete inner delay.
 
-That is why the two counts multiply, but setup and outer-control costs still have to be included.
+Therefore the timing contains a multiplicative term, but setup and outer-control overhead still matter.
 
-# 8. Derive the nested timing inside out
+At the course 4 MHz clock:
 
-## Inner loop itself
+```text
+TCY = 1 us
+```
+
+The formulas in this guide are written in instruction cycles first. Multiply by `TCY` if the clock changes.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="how-it-works"></a>
+## 5. How it works
+
+<a id="inner-loop"></a>
+### Derive the inner loop
 
 For `I` effective decrements:
 
 ```text
-Tinner_loop = 3(I-1) + 2
-            = 3I - 1
+first I - 1 passes:
+    DECFSZ = 1
+    GOTO   = 2
+    total  = 3 each
+
+final pass:
+    DECFSZ with skip = 2
 ```
 
-## Inner setup plus inner loop
+Therefore:
+
+```text
+Tinner_loop = 3(I - 1) + 2
+            = 3I - 1 cycles
+```
+
+<a id="inner-per-outer"></a>
+### Add inner setup
 
 Each outer iteration executes:
 
@@ -233,28 +153,38 @@ inner loop    3I - 1 cycles
 So:
 
 ```text
-Tinner_per_outer = 3I + 1
+Tinner_per_outer = 3I + 1 cycles
 ```
 
-## Outer control
+<a id="outer-control"></a>
+### Add outer control
 
-Across all `N` outer iterations:
+Across `N` outer iterations:
 
 ```text
-first N-1 outer passes = 3(N-1)
-final outer DECFSZ      = 2
+first N - 1 outer passes:
+    DECFSZ + GOTO = 3 each
+
+final outer pass:
+    DECFSZ with skip = 2
 ```
 
-Therefore:
+Thus:
 
 ```text
-Touter_control = 3N - 1
+Touter_control = 3(N - 1) + 2
+               = 3N - 1 cycles
 ```
 
-## Add the one-time outer setup
+<a id="nested-formula"></a>
+### Combine the terms
+
+The one-time outer setup is:
 
 ```text
-outer setup = 2 cycles
+MOVLW N = 1
+MOVWF outer = 1
+total = 2 cycles
 ```
 
 Total:
@@ -264,73 +194,59 @@ Tnested = 2 + N(3I + 1) + (3N - 1)
         = N(3I + 4) + 1 cycles
 ```
 
-This formula belongs to this exact code and timing boundary. If you move an instruction, add a NOP, preload W differently, or include surrounding `Main` work, derive the new expression from the changed path.
+This formula belongs to **this exact code and timing boundary**.
 
-# 9. Minimum, maximum, and step size
+Move an instruction, add a `NOP`, change the preload sequence, or include surrounding code and the expression must be re-derived.
 
-## Minimum
+<a id="zero-preload"></a>
+### A loaded zero still means 256 decrements
 
-Set both effective counts to one:
-
-```text
-T = 1(3*1 + 4) + 1
-  = 8 cycles
-  = 8 us at 4 MHz
-```
-
-## Maximum with two byte counters
-
-A loaded zero represents 256 effective decrements:
+For either 8-bit counter:
 
 ```text
-T = 256(3*256 + 4) + 1
-  = 197633 cycles
-  = 197.633 ms at 4 MHz
+loaded 0x01 -> 1 effective decrement
+...
+loaded 0xFF -> 255 effective decrements
+loaded 0x00 -> 256 effective decrements
 ```
 
-## Change the outer count
+Use the effective count 256 in the timing equation when a byte counter is loaded with zero.
 
-Hold `I` fixed. Increasing `N` by one adds:
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="worked-examples"></a>
+## 6. Worked examples
+
+<a id="three-four-example"></a>
+### Worked example: `N = 3`, `I = 4`
+
+**Known**
 
 ```text
-Delta_N = 3I + 4 cycles
+Tnested = N(3I + 4) + 1
 ```
 
-Example with `I=10`:
+**Reasoning**
 
 ```text
-Delta_N = 34 cycles = 34 us
+T = 3(3×4 + 4) + 1
+  = 3(16) + 1
+  = 49 cycles
 ```
-
-## Change the inner count
-
-Hold `N` fixed. Increasing `I` by one adds:
-
-```text
-Delta_I = 3N cycles
-```
-
-Example with `N=20`:
-
-```text
-Delta_I = 60 cycles = 60 us
-```
-
-If both counts use the same value `x`:
-
-```text
-T = x(3x + 4) + 1
-  = 3x^2 + 4x + 1
-```
-
-That is quadratic growth, not exponential growth.
-
-# 10. Worked target: exactly 1 ms
 
 At 4 MHz:
 
 ```text
-1 ms = 1000 us = 1000 instruction cycles
+T = 49 us
+```
+
+<a id="one-ms-example"></a>
+### Worked example: exactly 1 ms
+
+At 4 MHz:
+
+```text
+1 ms = 1000 instruction cycles
 ```
 
 We want:
@@ -339,187 +255,175 @@ We want:
 1000 = N(3I + 4) + 1
 ```
 
-One exact solution is:
+One exact integer solution is:
 
 ```text
 I = 11
 N = 27
 ```
 
-Check it:
+Check:
 
 ```text
-T = 27(3*11 + 4) + 1
+T = 27(3×11 + 4) + 1
   = 27(37) + 1
-  = 999 + 1
   = 1000 cycles
   = 1.000 ms
 ```
 
-The important habit is to verify the result by substituting the chosen counts back into the equation.
+<a id="range-step-example"></a>
+### Worked example: range and step size
 
-# 11. When software delay loops stop being a good tool
-
-A blocking software delay makes the CPU spend its time counting instead of doing other work.
-
-Software delays are useful for:
-
-- learning instruction timing;
-- very small simple delays;
-- controlled demonstrations;
-- situations where blocking is acceptable.
-
-Move toward timers, interrupts, or sleep when:
-
-- the delay becomes long;
-- other work must occur during the wait;
-- timing must remain accurate while code changes;
-- power consumption matters;
-- several independent time intervals must be managed.
-
-# Practice problems
-
-## 1. Instruction cycle
-
-A PIC16F883 is running from a 4 MHz oscillator. What is `TCY`?
-
-## 2. Single delay
-
-Using `Tsingle = 3n + 1`, calculate the delay for `n=25` at 4 MHz.
-
-## 3. Zero preload
-
-What effective count should be used in the timing equation when the byte counter is loaded with `0x00`?
-
-## 4. Hit 50 us
-
-For `Tsingle = 3n + 1`, choose the largest integer `n` that does not exceed 50 us at 4 MHz. How many additional one-cycle instructions are needed to reach exactly 50 us?
-
-## 5. Nested delay
-
-For the explicit nested code in this guide, calculate the delay for:
+Minimum:
 
 ```text
-N = 3
-I = 4
+N = 1
+I = 1
+
+T = 1(3×1 + 4) + 1
+  = 8 cycles
 ```
 
-## 6. Outer step size
-
-If `I=12`, how much does the nested delay change when `N` increases by one?
-
-## 7. Inner step size
-
-If `N=18`, how much does the nested delay change when `I` increases by one?
-
-## 8. Growth type
-
-Set `N=I=x`. Write the timing expression in terms of `x`. Is it linear, quadratic, or exponential?
-
-## 9. Maximum
-
-Calculate the maximum delay when both byte counters are loaded with `0x00` at 4 MHz.
-
-## 10. Hardware reasoning
-
-Why can `XORWF PORTB,F` modify an output bit you did not intend to toggle even if the XOR mask contains a zero for that bit?
-
-# Answer key
-
-## 1
+Maximum with both byte counters loaded with `0x00`:
 
 ```text
-TCY = 4/FOSC = 4/4 MHz = 1 us
+N = 256
+I = 256
+
+T = 256(3×256 + 4) + 1
+  = 197633 cycles
+  = 197.633 ms at 4 MHz
 ```
 
-## 2
+Change outer count by one while holding `I` fixed:
 
 ```text
-T = 3(25) + 1 = 76 cycles = 76 us
+Delta_N = 3I + 4 cycles
 ```
 
-## 3
-
-256 effective decrements.
-
-## 4
+Change inner count by one while holding `N` fixed:
 
 ```text
-3n + 1 <= 50
-n <= 16.333...
+Delta_I = 3N cycles
 ```
 
-Use `n=16`:
-
-```text
-T = 49 us
-```
-
-Add one one-cycle instruction, such as a `NOP`, inside the defined timing boundary to reach 50 us.
-
-## 5
-
-```text
-T = N(3I + 4) + 1
-  = 3(12 + 4) + 1
-  = 49 cycles
-  = 49 us
-```
-
-## 6
-
-```text
-Delta_N = 3I + 4 = 3(12) + 4 = 40 cycles = 40 us
-```
-
-## 7
-
-```text
-Delta_I = 3N = 54 cycles = 54 us
-```
-
-## 8
+If `N = I = x`:
 
 ```text
 T = x(3x + 4) + 1
   = 3x^2 + 4x + 1
 ```
 
-Quadratic.
+The growth is quadratic, not exponential.
 
-## 9
+[Back to top](#top) · [Topics index](README.md)
 
-```text
-T = 256(3*256 + 4) + 1
-  = 197633 us
-  = 197.633 ms
-```
+<a id="apply-verify-troubleshoot"></a>
+## 7. Apply, verify, and troubleshoot
 
-## 10
+<a id="solve-target"></a>
+### Choose counts for a target
 
-On this device, PORT writes are read-modify-write. Reading `PORTB` reads the actual pin states. The value read from a loaded or differently configured pin can differ from the intended output latch state, and the modified byte is then written back to the PORT latch.
+A practical process is:
 
-# What to be able to explain without notes
+1. convert the desired time to instruction cycles;
+2. write the exact timing equation;
+3. choose a practical inner count;
+4. solve for the outer count;
+5. round only when necessary;
+6. substitute the chosen counts back into the equation;
+7. calculate residual error;
+8. decide whether a few one-cycle instructions can trim the residual;
+9. measure the same defined interval.
 
-- why `FOSC/4` matters;
-- why the final `DECFSZ` is different;
-- why count zero means 256 in this loop;
-- how to derive `3n+1` rather than memorize it;
-- how to derive a nested delay from the inside outward;
-- why the explicit two-loop code gives `N(3I+4)+1`;
-- how to separate delay time from surrounding `Main` time;
-- why direct PORT read-modify-write operations can surprise you;
-- why a timer eventually becomes preferable to a long blocking delay.
+<a id="when-not-to-use-delay-loops"></a>
+### Know when a timer is the better tool
 
-# References used to build this guide
+Blocking software delay loops are useful for:
 
-Microchip PIC16F882/883/884/886/887 Data Sheet, DS40001291H  
-https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/40001291H.pdf
+- learning instruction timing;
+- very simple short delays;
+- controlled demonstrations;
+- cases where the CPU genuinely has nothing else to do.
 
-PICmicro Mid-Range MCU Family Reference Manual  
-https://ww1.microchip.com/downloads/en/DeviceDoc/33023a.pdf
+Move toward [hardware timers](timers.md#core-model) when:
 
-RCET3373 Fall 2026 teaching record:
+- the wait is long;
+- other work must continue;
+- timing should remain stable when code changes;
+- several time intervals must coexist;
+- power matters;
+- events should be scheduled rather than blocked.
 
-- W02D02 timing and first software-delay session;
-- W02D03 nested-loop session and post-class accuracy review.
+<a id="common-errors"></a>
+### Common nested-delay errors
+
+Watch for:
+
+- forgetting the final skip cost;
+- counting inner setup only once instead of once per outer pass;
+- treating a zero preload as zero iterations;
+- assuming routine timing equals waveform timing;
+- substituting literal register values instead of effective counts;
+- using a memorized formula after changing the code.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="practice"></a>
+## 8. Practice
+
+1. For `N = 3`, `I = 4`, calculate the delay at 4 MHz.
+2. If `I = 12`, how much does the delay change when `N` increases by one?
+3. If `N = 18`, how much does the delay change when `I` increases by one?
+4. Set `N = I = x`. Write the timing expression and identify its growth type.
+5. Calculate the maximum two-byte nested delay at 4 MHz when both counters are loaded with `0x00`.
+6. Why is the inner-loop setup multiplied by `N`?
+7. Why does a changed code path require a new timing derivation?
+8. A target is 5 ms. Describe the process you would use to select `N` and `I`; do not guess counts.
+9. When is a hardware timer preferable to another level of software nesting?
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="answer-key"></a>
+## 9. Answer key
+
+1. `T = 3(3×4 + 4) + 1 = 49 cycles = 49 us`.
+2. `Delta_N = 3(12) + 4 = 40 cycles = 40 us`.
+3. `Delta_I = 3(18) = 54 cycles = 54 us`.
+4. `T = 3x^2 + 4x + 1`; quadratic.
+5. `197633 us = 197.633 ms`.
+6. Every outer iteration reloads and executes the inner loop from the beginning.
+7. The formula is a count of the exact instructions actually executed; changing the path changes the count.
+8. Convert 5 ms to cycles, use `N(3I+4)+1`, choose/solve integer counts, substitute to verify, then calculate residual error and measure the same boundary.
+9. When the CPU should not be blocked, timing must survive code changes, waits become long, or several independent time intervals must coexist.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="retrieval-check"></a>
+## 10. What you should be able to explain without notes
+
+You should be able to:
+
+- derive the nested equation from the inside outward;
+- explain every term in `N(3I + 4) + 1`;
+- explain why zero means 256 effective decrements;
+- calculate minimum, maximum, and count-step changes;
+- solve and verify target-delay counter values;
+- explain why equal counters create quadratic growth;
+- identify the point where a timer is a better engineering choice.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="references"></a>
+## 11. References
+
+- Microchip Technology Inc., *PIC16F882/883/884/886/887 Data Sheet*, DS40001291H, Instruction Set Summary — https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/40001291H.pdf
+  - Used for: `DECFSZ`, `GOTO`, and documented instruction cycle counts.
+
+- Microchip Technology Inc., *PICmicro Mid-Range MCU Family Reference Manual*, DS33023A — https://ww1.microchip.com/downloads/en/DeviceDoc/33023A.pdf
+  - Used for: pipeline/skip/control-flow timing context.
+
+- [Instruction Timing and Software Delays](instruction-timing-software-delays.md#single-delay)
+  - RCET prerequisite derivation for the one-byte `3n + 1` delay used as the starting point for this guide.
+
+[Back to top](#top) · [Topics index](README.md)
