@@ -1,89 +1,176 @@
-# RCET3373 W02D02 - Self-Learning Guide
+<a id="top"></a>
 
-# What you should be able to do
+# RCET 3373 — Instruction Timing and Software Delays
 
-Calculate the PIC16F883 instruction-cycle time from the oscillator, explain basic pipeline timing, count a one-byte `DECFSZ` software delay, and define exactly what interval your timing equation describes.
+*Self-learning guide*
 
-# 1. Start with oscillator frequency
+[Topics index](README.md)
 
-The course hardware uses a 4 MHz external crystal.
+<a id="contents"></a>
+## Contents
+
+- [1. Why this matters](#why-this-matters)
+- [2. What you should be able to do](#learning-outcomes)
+- [3. Prerequisites and related topics](#prerequisites)
+- [4. Core model and vocabulary](#core-model)
+- [5. How it works](#how-it-works)
+- [6. Worked examples](#worked-examples)
+- [7. Apply, verify, and troubleshoot](#apply-verify-troubleshoot)
+- [8. Practice](#practice)
+- [9. Answer key](#answer-key)
+- [10. What you should be able to explain without notes](#retrieval-check)
+- [11. References](#references)
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="why-this-matters"></a>
+## 1. Why this matters
+
+Software timing is only meaningful when you know how oscillator time becomes instruction time and exactly which instructions execute inside the interval you are measuring.
+
+The PIC16F883 is especially useful for learning this because its classic mid-range timing model is simple enough to derive by hand:
 
 ```text
-FOSC = 4 MHz = 4,000,000 Hz
+oscillator -> instruction cycle -> executed path -> predicted time
 ```
 
-Period is the reciprocal of frequency:
+This guide establishes the timing model used by later delay, subroutine, lookup-table, interrupt, and timer work.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="learning-outcomes"></a>
+## 2. What you should be able to do
+
+After working through this guide, you should be able to:
+
+- convert oscillator frequency to oscillator period;
+- calculate PIC16F883 instruction-cycle time;
+- explain the basic fetch/execute pipeline model;
+- explain why control-flow and skip behavior can require an extra cycle;
+- trace the two timing cases of `DECFSZ`;
+- derive the exact one-byte delay formula used here;
+- explain why a preload of zero represents 256 decrements in this countdown;
+- calculate minimum, maximum, and count-step resolution;
+- define the timing boundary before applying a formula.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="prerequisites"></a>
+## 3. Prerequisites and related topics
+
+Before this guide, review:
+
+- [Digital Timing](digital-timing.md#period-frequency);
+- [PIC16F883 Architecture](pic16f883-architecture.md#instruction-format).
+
+Related topics:
+
+- [Nested-Loop Delays](nested-loop-delays.md#core-model);
+- [Subroutines and Return Stack](subroutines-return-stack.md#callable-delay);
+- [Measurement Strategy and C Timing](measurement-c-timing.md#measurement-strategy);
+- [PIC16F883 Timers](timers.md#core-model).
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="core-model"></a>
+## 4. Core model and vocabulary
+
+<a id="instruction-cycle"></a>
+### Oscillator period and instruction-cycle time
+
+The course PIC16F883 hardware uses a 4 MHz external crystal for the introductory timing work.
 
 ```text
+FOSC = 4 MHz
+
 TOSC = 1 / FOSC
-     = 1 / 4,000,000 s
      = 0.25 us
 ```
 
-That is the period of one oscillator cycle, not one complete PIC instruction cycle.
-
-# 2. One instruction cycle uses four oscillator periods
-
-For the PIC16F883 mid-range core:
+For the classic mid-range PIC core:
 
 ```text
-TCY = 4 * TOSC
+TCY = 4 × TOSC
+    = 4 / FOSC
 ```
 
 At 4 MHz:
 
 ```text
-TCY = 4 * 0.25 us
-    = 1 us
+TCY = 1 us
 ```
 
-The data-sheet timing model describes four phases, Q1 through Q4, within the instruction cycle.
+That convenient equality means 31 instruction cycles correspond to 31 us **only when the executed path actually contains 31 instruction cycles**.
 
-This 4 MHz clock is convenient because instruction-cycle counts and microseconds have the same numeric value:
+<a id="timing-boundary"></a>
+### A formula belongs to a defined interval
 
-```text
-31 instruction cycles = 31 us
-```
+Before counting anything, state the beginning and end of the timed interval.
 
-provided the counted path really contains 31 instruction cycles.
+Example:
 
-# 3. Why most instructions are one cycle
+> Start with the first `MOVLW`. End after the final `DECFSZ` completes and skips the following `GOTO`.
 
-The PIC overlaps instruction fetch and execution. While the current instruction executes, the next sequential instruction is fetched.
+Without that sentence, two correct cycle counts can describe two different intervals.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="how-it-works"></a>
+## 5. How it works
+
+<a id="pipeline"></a>
+### Fetch/execute overlap
+
+The PIC overlaps instruction fetch and execution.
 
 A simplified model is:
 
 ```text
-instruction cycle k:     execute A, fetch B
-instruction cycle k + 1: execute B, fetch C
+cycle k:     execute A, fetch B
+cycle k+1:   execute B, fetch C
 ```
 
-This overlap permits normal straight-line instructions to complete at one instruction per instruction cycle after the pipeline is active.
+Most straight-line instructions therefore complete in one instruction cycle after the pipeline is active.
 
-# 4. Why `GOTO` takes the extra cycle
+<a id="control-flow-extra-cycle"></a>
+### Why control flow can take an extra cycle
 
-Suppose B is a `GOTO`. The core has already fetched the next sequential instruction C, but B changes the program counter to a different target. The prefetched sequential instruction is discarded and the target stream has to refill.
+If instruction B changes the Program Counter, the sequential instruction already fetched after B is no longer the correct next instruction.
 
-That refill/discard produces the documented two-cycle behavior.
+That fetched instruction is discarded and the new target path must refill.
 
-It is reasonable to imagine the discarded slot as "NOP-like time" while learning the pipeline, but the source code did not literally acquire a NOP instruction.
+This produces the documented two-cycle behavior for instructions such as `GOTO`.
 
-# 5. `DECFSZ` has two timing cases
+The source code did not literally gain a `NOP`; “NOP-like” is only a mental model for the lost pipeline slot.
 
-`DECFSZ f,F` decrements the file register and skips the next instruction if the result is zero.
+**Official visual reference:** In the [PICmicro Mid-Range MCU Family Reference Manual](https://ww1.microchip.com/downloads/en/DeviceDoc/33023A.pdf), use the architecture/instruction-flow material to follow instruction fetch, execute, and pipeline flush behavior.
 
-For the delay loop:
+<a id="decfsz"></a>
+### `DECFSZ` has two timing cases
 
-```text
-result is nonzero -> 1 cycle, next GOTO executes
-result is zero    -> 2 cycles, next GOTO is skipped
+`DECFSZ f,F` decrements the file register and skips the next instruction when the result is zero.
+
+For:
+
+```asm
+delay:
+    decfsz  d1,F
+    goto    delay
 ```
 
-That final skip changes the loop arithmetic.
+the cases are:
 
-# 6. Build the one-byte delay
+| Result after decrement | `DECFSZ` | `GOTO` | Total |
+| --- | ---: | ---: | ---: |
+| nonzero | 1 cycle | 2 cycles | 3 cycles |
+| zero | 2 cycles | skipped | 2 cycles |
 
-Use this exact skeleton:
+The final pass is therefore different from every ordinary pass.
+
+<a id="single-delay"></a>
+### Derive the one-byte delay
+
+Use:
 
 ```asm
     movlw   n
@@ -93,41 +180,33 @@ delay:
     goto    delay
 ```
 
-Before counting cycles, define the interval:
+For the timing boundary defined in this guide:
 
-> Start with the first `MOVLW`. End after the final `DECFSZ` has completed and skipped the `GOTO`.
-
-That definition is part of the formula.
-
-# 7. Derive the formula instead of memorizing it
-
-Setup:
+**Setup**
 
 ```text
-MOVLW = 1 cycle
-MOVWF = 1 cycle
+MOVLW = 1
+MOVWF = 1
 setup = 2 cycles
 ```
 
-For the first `n - 1` decrements, the result is not zero:
+**First `n - 1` decrements**
 
 ```text
-DECFSZ = 1
-GOTO   = 2
-total  = 3 cycles each
+DECFSZ + GOTO = 3 cycles each
 ```
 
-On the final decrement, the result becomes zero and `GOTO` is skipped:
+**Final decrement**
 
 ```text
-final DECFSZ = 2 cycles
+DECFSZ with skip = 2 cycles
 ```
 
-Total:
+Therefore:
 
 ```text
-T = 2 + 3(n - 1) + 2
-  = 3n + 1 instruction cycles
+Tcycles = 2 + 3(n - 1) + 2
+        = 3n + 1
 ```
 
 At 4 MHz:
@@ -136,14 +215,43 @@ At 4 MHz:
 T = (3n + 1) us
 ```
 
-# 8. Worked example: n = 10
+<a id="zero-means-256"></a>
+### Why loading zero means 256 decrements
+
+The counter is eight bits.
+
+If it begins at `0x00`, the first decrement produces `0xFF`, not the terminating zero.
 
 ```text
-T = 3(10) + 1
-  = 31 us
+0x00 -> 0xFF -> ... -> 0x01 -> 0x00
 ```
 
-Check by expanding the path:
+The countdown therefore requires 256 decrements before `DECFSZ` sees a zero result.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="worked-examples"></a>
+## 6. Worked examples
+
+<a id="n10-example"></a>
+### Worked example: `n = 10`
+
+**Known**
+
+```text
+FOSC = 4 MHz
+TCY  = 1 us
+n    = 10
+```
+
+**Reasoning**
+
+```text
+Tcycles = 3(10) + 1
+        = 31 cycles
+```
+
+Expanded check:
 
 ```text
 setup                    2
@@ -153,99 +261,129 @@ final skip                2
 total                    31 cycles
 ```
 
-# 9. Minimum, maximum, and resolution
-
-## Minimum
-
-With `n = 1`:
+**Result**
 
 ```text
-T = 3(1) + 1 = 4 us
+T = 31 us
 ```
 
-## Why a literal zero count means 256
+<a id="range-resolution"></a>
+### Worked example: range and resolution
 
-The counter is 8 bits. If it begins at `0x00`, the first decrement produces `0xFF`, not the final zero condition. It must pass through the complete 8-bit range and return to zero.
+Minimum effective count:
 
 ```text
-0x00 -> 0xFF -> ... -> 0x01 -> 0x00
+n = 1
+T = 3(1) + 1 = 4 cycles = 4 us
 ```
 
-That takes 256 decrements.
-
-## Maximum
+Maximum effective count:
 
 ```text
 n = 256
-T = 3(256) + 1
-  = 769 us
+T = 3(256) + 1 = 769 cycles = 769 us
 ```
 
-## Resolution
-
-Changing the effective count by one changes the delay by three cycles:
+Changing the effective count by one changes the delay by:
 
 ```text
-T(n+1) - T(n) = 3 us
+T(n+1) - T(n) = 3 cycles = 3 us
 ```
 
-So this exact loop can adjust delay in 3 us increments by changing only the count.
+So this exact delay skeleton has 3 us count-step resolution at 4 MHz.
 
-# 10. Do not confuse delay-routine time with waveform time
+[Back to top](#top) · [Topics index](README.md)
 
-Suppose the code toggles a pin, loads the counter, delays, then executes other instructions before toggling the pin again.
+<a id="apply-verify-troubleshoot"></a>
+## 7. Apply, verify, and troubleshoot
 
-The oscilloscope pulse width includes **every executed instruction between the two edges**, not only the countdown loop.
+<a id="waveform-boundary"></a>
+### Delay-routine time is not automatically waveform time
 
-Therefore:
+Suppose a pin toggles, then code executes:
 
-1. mark the first measured edge/instruction boundary;
-2. mark the second;
-3. count every instruction on the path;
-4. use `3n + 1` only for the exact delay skeleton interval;
-5. add the surrounding instruction cycles separately.
+- delay setup;
+- the delay loop;
+- two other instructions;
+- another pin toggle.
 
-The live W02D02 discussion briefly mixed two boundaries and produced 48/49 us wording. The reusable rule is to define the boundary first rather than choose one of those values out of context.
+The oscilloscope measures **all executed time between the two edges**.
 
-# 11. Why we need nested loops next
+Do not use `3n + 1` as if it describes the entire waveform path unless the waveform boundaries match the exact delay skeleton.
 
-One 8-bit counter reaches at most 769 us with this exact setup. Longer delays need another counter or another timing mechanism.
+<a id="timing-analysis-checklist"></a>
+### Timing-analysis checklist
 
-W02D03 adds an outer counter. The same discipline still applies: write the explicit code, define start and stop, count every execution path, then derive the equation.
+For a new software timing problem:
 
-# Practice problems
+1. identify `FOSC`;
+2. calculate `TCY`;
+3. write the exact executed code;
+4. define the start and stop events;
+5. identify instructions with alternate cycle counts;
+6. count the actual execution path;
+7. derive the equation;
+8. substitute test values;
+9. measure the same boundary;
+10. explain any disagreement.
+
+For scope/counter selection and evidence quality, see [Measurement Strategy and C Timing](measurement-c-timing.md#measurement-strategy).
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="practice"></a>
+## 8. Practice
 
 1. At 4 MHz, calculate `TOSC` and `TCY`.
 2. Why does `GOTO` require two instruction cycles on this core?
 3. For `n = 5`, calculate the exact delay interval defined in this guide.
-4. Expand the `n = 5` cycle count into setup, ordinary iterations, and final skip.
-5. What effective count is produced by loading `0x00` into an 8-bit `DECFSZ` countdown?
+4. Expand the `n = 5` count into setup, ordinary iterations, and final skip.
+5. What effective count results from loading `0x00` into the byte counter?
 6. What are the minimum and maximum delays for this skeleton at 4 MHz?
 7. What is its count-only timing resolution?
-8. A scope pulse begins before `MOVLW` and ends after two instructions that follow the final `DECFSZ`. Can `3n + 1` alone equal the measured pulse width? Explain.
-9. Write the timing-boundary sentence you would record before analyzing a new loop.
+8. A scope pulse begins before `MOVLW` and ends after two instructions following the final `DECFSZ`. Can `3n + 1` alone equal the measured pulse width?
+9. Write a timing-boundary sentence for a new loop.
 
-# Answer key
+[Back to top](#top) · [Topics index](README.md)
 
-1. `TOSC = 0.25 us`; `TCY = 4TOSC = 1 us`.
-2. The sequentially prefetched instruction is discarded when the PC changes, so the target path requires the documented refill/extra cycle.
+<a id="answer-key"></a>
+## 9. Answer key
+
+1. `TOSC = 0.25 us`; `TCY = 1 us`.
+2. Changing the PC invalidates the sequentially prefetched instruction, so the target stream requires the documented extra cycle.
 3. `T = 3(5) + 1 = 16 us`.
-4. Setup 2 cycles; four ordinary iterations at 3 cycles = 12; final skip 2; total 16.
+4. Setup = 2 cycles; four ordinary iterations = 12; final skip = 2; total = 16.
 5. 256 decrements.
-6. Minimum 4 us at effective `n = 1`; maximum 769 us at effective `n = 256`.
+6. Minimum = 4 us; maximum = 769 us.
 7. 3 us per count step.
-8. No. The pulse includes instructions outside the interval defined by `3n + 1`; their cycles must be counted too.
-9. A valid answer explicitly names the first instruction/event and the last instruction/event included in the interval.
+8. No. The measured pulse includes instructions outside the formula's defined interval.
+9. A correct answer names the exact first and last instruction/event included in the measurement.
 
-# What to be able to explain without notes
+[Back to top](#top) · [Topics index](README.md)
 
-- 4 MHz -> 0.25 us oscillator period -> 1 us instruction cycle;
-- the pipeline reason for two-cycle control-flow/skip behavior;
-- the full derivation of `3n + 1`;
-- why zero represents 256 decrements in this loop;
-- minimum, maximum, and resolution;
-- why every timing formula must be attached to a defined code/measurement interval.
+<a id="retrieval-check"></a>
+## 10. What you should be able to explain without notes
 
-# Reference
+You should be able to:
 
-Microchip DS40001291H, using the oscillator/CPU/instruction-cycle and instruction-set timing information for the PIC16F883.
+- derive `TCY = 4/FOSC`;
+- explain the pipeline reason for two-cycle control-flow behavior;
+- trace both `DECFSZ` timing cases;
+- derive `3n + 1` from the code path;
+- explain why a zero preload means 256 decrements;
+- calculate minimum, maximum, and step resolution;
+- define a timing boundary before doing arithmetic;
+- explain why routine timing and measured waveform timing can differ.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="references"></a>
+## 11. References
+
+- Microchip Technology Inc., *PIC16F882/883/884/886/887 Data Sheet*, DS40001291H, oscillator/CPU timing and Instruction Set Summary — https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/40001291H.pdf
+  - Used for: PIC16F883 instruction-cycle relationship and documented instruction cycle counts.
+
+- Microchip Technology Inc., *PICmicro Mid-Range MCU Family Reference Manual*, DS33023A, architecture/instruction-flow material — https://ww1.microchip.com/downloads/en/DeviceDoc/33023A.pdf
+  - Used for: fetch/execute pipeline and classic mid-range instruction timing context.
+
+[Back to top](#top) · [Topics index](README.md)

@@ -1,95 +1,205 @@
-# RCET3373 W01D05 - Self-Learning Guide
+<a id="top"></a>
 
-# What you should be able to do
+# RCET 3373 — PORTB Datasheet-Driven Configuration
 
-Use the PIC16F883 data sheet to determine what must be configured for PORTB to operate as eight digital outputs, explain which associated registers do or do not matter to that function, and implement an observable counter without relying on a port read-modify-write instruction.
+*Self-learning guide*
 
-# 1. Begin with the function
+[Topics index](README.md)
 
-The requested behavior is:
+<a id="contents"></a>
+## Contents
 
-> Use all eight PORTB pins as digital outputs and repeatedly display an incrementing 8-bit value.
+- [1. Why this matters](#why-this-matters)
+- [2. What you should be able to do](#learning-outcomes)
+- [3. Prerequisites and related topics](#prerequisites)
+- [4. Core model and vocabulary](#core-model)
+- [5. How it works](#how-it-works)
+- [6. Worked examples](#worked-examples)
+- [7. Apply, verify, and troubleshoot](#apply-verify-troubleshoot)
+- [8. Practice](#practice)
+- [9. Answer key](#answer-key)
+- [10. What you should be able to explain without notes](#retrieval-check)
+- [11. References](#references)
 
-Do not begin with "clear a bunch of registers." Begin by asking what must be true for that behavior to exist.
+[Back to top](#top) · [Topics index](README.md)
 
-# 2. Find the pins and alternate functions
+<a id="why-this-matters"></a>
+## 1. Why this matters
 
-Use the PIC16F883 pin diagram and PORTB section. PORTB pins have alternate functions. The presence of an alternate-function label does not automatically mean the alternate peripheral is active, but it tells you what other chapters/registers may affect the pin.
+A microcontroller pin is not automatically “a digital output” because your program writes a 1 or 0 to a PORT register.
 
-Your first questions should always include:
+Real pin behavior depends on several layers:
 
-- Which pins?
-- Which alternate functions?
-- Which SFRs?
-- Which reset values?
-- Which other enables can claim or alter the pin?
+- the pin's alternate functions;
+- analog/digital selection;
+- input/output direction;
+- peripheral enables;
+- reset state;
+- the value written to the port;
+- external electrical loading.
 
-# 3. Direction and digital mode are different controls
+A reliable configuration starts from the required function and uses the data sheet to justify each register choice.
 
-`TRISB` controls direction:
+This guide uses PORTB as the concrete example, but the investigation method transfers to other ports and other microcontrollers.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="learning-outcomes"></a>
+## 2. What you should be able to do
+
+After working through this guide, you should be able to:
+
+- use the PIC16F883 pin diagram and PORTB chapter to identify alternate functions;
+- distinguish direction control from analog/digital selection;
+- interpret PORTB-related reset states;
+- classify related registers as required, already acceptable at reset, or irrelevant to the requested function;
+- choose a safe initialization order;
+- explain why direct read-modify-write operations on a PORT can be risky;
+- use a shadow GPR for software output state;
+- verify PORTB behavior with measurement or observation;
+- check output loading against the electrical specifications.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="prerequisites"></a>
+## 3. Prerequisites and related topics
+
+Before this guide, review:
+
+- [Data Memory, SFRs, and Banking](data-memory-sfrs-banking.md#core-model);
+- [Logic Levels, Noise Margin, and Loading](logic-levels-interfaces.md#core-model);
+- [PIC16F883 Architecture](pic16f883-architecture.md#electrical-limits).
+
+Related topics:
+
+- [Digital Representation](digital-representation.md#bit-fields);
+- [Interrupts and Context Saving](interrupts-context-saving.md#core-model) for PORTB interrupt sources later in the course.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="core-model"></a>
+## 4. Core model and vocabulary
+
+Start with the requested physical behavior:
+
+> Make all eight PORTB pins ordinary digital outputs and display an 8-bit software value.
+
+Then ask what must be true.
+
+<a id="configuration-layers"></a>
+### Configuration layers
+
+For a multifunction pin, separate these questions:
+
+1. **Pin function:** Which package pin and alternate functions are involved?
+2. **Digital/analog mode:** Is the digital input/output path enabled?
+3. **Direction:** Is the output driver enabled?
+4. **Peripheral ownership:** Is an enabled peripheral using the pin?
+5. **Output state:** What value will be driven?
+6. **Electrical load:** Can the pin drive the connected circuit safely and at valid logic levels?
+
+Do not start with “clear every register that mentions PORTB.”
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="how-it-works"></a>
+## 5. How it works
+
+<a id="pin-functions"></a>
+### Find the pins and alternate functions
+
+Use the PIC16F883 pin diagram and PORTB section.
+
+A package label may list several functions on one physical pin. That does not mean all of them are active simultaneously. It tells you which peripheral chapters and control registers can affect that pin.
+
+**Official visual reference:** In the [PIC16F882/883/884/886/887 Data Sheet](https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/40001291H.pdf), compare the device pin diagram with the PORTB block/description in Section 3.0.
+
+Focus on how one physical RB pin can connect to digital I/O plus alternate analog, programming, interrupt, or peripheral functions.
+
+<a id="digital-analog"></a>
+### Direction and digital mode are different controls
+
+`TRISB` controls output-driver direction:
 
 ```text
 TRIS bit = 1 -> input / output driver disabled
 TRIS bit = 0 -> output driver enabled
 ```
 
-After reset, `TRISB` is all ones, which keeps the output drivers disabled.
+After reset, `TRISB` is all ones, so the output drivers begin disabled.
 
-That does **not** mean every PORTB pin is already configured for ordinary digital input. On this device, the implemented `ANSELH` bits reset to analog mode. RB0 through RB5 therefore need their analog function disabled for normal digital I/O. RB6 and RB7 are not controlled by those ANSELH analog-channel bits.
+That does **not** mean all PORTB pins are ready for ordinary digital I/O.
 
-For eight digital outputs, both questions must be satisfied:
+On the PIC16F883, several PORTB pins are analog-capable and the applicable `ANSELH` bits must be configured for ordinary digital behavior.
 
-1. Are the pins in digital mode?
+For eight digital outputs, both questions matter:
+
+1. Are the applicable pins in digital mode?
 2. Are the output drivers enabled?
 
-# 4. Read reset-state diagrams literally
+<a id="reset-state"></a>
+### Read reset-state notation literally
 
-The data-sheet reset legend matters.
+The data sheet distinguishes defined and undefined reset states.
 
-- `0` and `1` are defined reset states.
-- `x` means unknown.
-- `u` means unchanged in the reset-state notation used by the data sheet.
+Common symbols include:
 
-An `x` in a PORT value diagram does not mean active-high or active-low. It means software must not assume a defined reset value for that bit.
+- `0` or `1`: defined reset value;
+- `x`: unknown/undefined value;
+- `u`: unchanged under the reset condition indicated by the table.
 
-# 5. Classify associated registers before writing code
+Do not invent a meaning for `x`.
 
-For every register mentioned by the port section, ask which bucket it belongs in.
+If an output value is not guaranteed after reset, software should establish a known state before enabling the output driver.
 
-## Required to change
+<a id="register-classification"></a>
+### Classify related registers before changing them
 
-For this exercise, digital/analog selection and direction clearly matter. The output value also has to be established.
+For each PORTB-related control, put it into one of three categories.
 
-## Already acceptable at reset
+**Required to change**
 
-If the data sheet shows that a control already has the required state, leaving it alone may be the correct design decision.
+The current application cannot work without changing it.
 
-## Alternate peripheral only
+Examples for eight digital outputs include applicable analog selection and direction.
 
-A selector for a disabled peripheral is not automatically a problem. For example, a Timer1 gate-source selector does not itself enable Timer1 gating. Check the actual enable path before changing it.
+**Already acceptable at reset**
 
-This is a better rule than clearing every register that mentions PORTB.
+The documented default already matches the design requirement.
 
-# 6. Bank selection should be intentional
+Leave it alone unless there is another reason to write it.
 
-The STATUS bank-select bits have documented reset values. The starting bank is therefore not a mystery after the reset conditions considered here.
+**Alternate peripheral only**
 
-Still, select the required bank explicitly before accessing a banked SFR. That documents intent and prevents a later edit from silently changing which register the instruction reaches.
+A register may mention RBx because an alternate peripheral can use that pin.
 
-# 7. Initialize before enabling the drivers
+Do not change a selector simply because it names PORTB. First determine whether the corresponding peripheral is enabled and actually conflicts with the requested function.
+
+<a id="bank-selection"></a>
+### Bank selection should be explicit
+
+Select the required bank intentionally before a banked SFR access.
+
+That makes the code's addressing assumption visible and protects it from unrelated changes elsewhere.
+
+See [Data Memory, SFRs, and Banking](data-memory-sfrs-banking.md#bank-selection).
+
+<a id="initialization-order"></a>
+### Initialize state before enabling the drivers
 
 A clean bring-up order is:
 
-1. leave `TRISB` as inputs while configuring;
-2. disable the analog functions required for digital PORTB operation;
-3. place a known value in the desired software/output state;
-4. write that value to `PORTB`;
+1. leave `TRISB` as inputs while configuration is changing;
+2. disable the applicable analog functions;
+3. create a known software/output value;
+4. write the intended initial value to `PORTB`;
 5. set `TRISB` for outputs;
 6. begin normal updates.
 
-This reduces surprises when the external drivers become active.
+This reduces unwanted output transitions when the external drivers become active.
 
-# 8. Do not increment `PORTB` directly
+<a id="read-modify-write"></a>
+### Avoid using the physical port as your software counter
 
 A tempting loop is:
 
@@ -99,9 +209,11 @@ loop:
     goto    loop
 ```
 
-Do not use this as the reusable model. `INCF PORTB,F` is a read-modify-write operation. The read can reflect physical pin levels. A heavily loaded or slow output can therefore change the value that is read, modified, and written back.
+On this architecture, read-modify-write behavior can involve reading the port pins before writing the modified value back.
 
-Keep the desired value in a GPR instead:
+Physical loading or transition timing can therefore affect the value used as the source of the next update.
+
+Keep the desired output state in a GPR instead:
 
 ```asm
     clrf    portShadow
@@ -115,71 +227,168 @@ loop:
     goto    loop
 ```
 
-Now the arithmetic operates on software state, then a whole byte is explicitly copied to the output port.
+Now arithmetic operates on software state, and a complete intended byte is copied to the port.
 
-# 9. Know what `INCF` does to STATUS
+<a id="electrical-loading"></a>
+### The pin still has electrical limits
 
-`INCF` affects the Zero flag. If an 8-bit value increments from `0xFF` to `0x00`, the result is zero and the Zero flag is set. `INCF` does not update Carry.
+Correct register configuration does not prove that a connected load is safe.
 
-# 10. Watchdog timer mental model
+Before driving LEDs or other circuitry, check:
 
-The WDT is an independent timer when enabled. Correctly running software services it at deliberate points. If the program stops reaching that service point before timeout, the WDT can cause its configured response.
+- `VOH`/`VOL` conditions at the intended current;
+- per-pin source/sink limits;
+- aggregate port/device current;
+- supply limits;
+- external resistor/load ratings.
 
-It does not inspect the program counter and decide whether the address is correct.
+Do not design to the absolute-maximum current.
 
-# 11. Hardware inputs still need electrical reasoning
+Use [Logic Levels, Noise Margin, and Loading](logic-levels-interfaces.md#absolute-maximum) for the general electrical model.
 
-A high-impedance pin is not actively driving an output level, but that alone does not guarantee a safe or useful state. Floating CMOS inputs can behave unpredictably and consume unnecessary current. Use defined states compatible with the actual board and alternate functions.
+[Back to top](#top) · [Topics index](README.md)
 
-# Worked reasoning example
+<a id="worked-examples"></a>
+## 6. Worked examples
 
-**Goal:** PORTB is an 8-bit digital output.
+<a id="portb-output-example"></a>
+### Worked example: plan eight digital outputs
 
-**Known from reset:** output drivers begin disabled by `TRISB`; several PORTB pins default to analog mode through `ANSELH`.
+**Goal**
 
-**Required decisions:**
+Use PORTB as an 8-bit digital output.
 
-1. disable the relevant analog functions;
-2. initialize the intended output state;
-3. enable the PORTB output drivers;
-4. update output through a shadow GPR;
-5. leave unrelated alternate peripherals alone unless their enable state creates a real conflict.
+**Known from reset/documentation**
 
-The data sheet, not memory or a copied initialization block, justifies each decision.
+- output drivers begin disabled by `TRISB`;
+- several PORTB pins are analog-capable through `ANSELH`;
+- unrelated alternate-peripheral controls do not matter unless their peripherals are active;
+- the initial PORT value should not be assumed unless the reset table guarantees it.
 
-# Practice
+**Plan**
 
-1. Why is `TRISB = 0xFF` after reset useful during bring-up but insufficient to say PORTB is ready as eight digital inputs?
-2. What is the purpose of `ANSELH` in this exercise?
-3. Why is explicit bank selection useful even when the reset bank is documented?
-4. A Timer1 gate-source selector names RB5, but Timer1 gating is disabled. Must the selector necessarily be changed for basic PORTB output use? Explain.
-5. Why is `INCF PORTB,F` risky?
-6. What is a shadow register and how does it remove that particular risk?
-7. Which STATUS flag does `INCF` affect when the result wraps to zero?
-8. What does reset symbol `x` mean?
-9. What does the WDT actually monitor?
+1. set the applicable `ANSELH` state for digital operation;
+2. prepare a known output byte;
+3. write the byte to `PORTB`;
+4. set `TRISB` to enable the output drivers;
+5. update output through a shadow GPR.
 
-# Answer key
+**Meaning**
 
-1. `TRISB = 0xFF` disables the output drivers, but RB0-RB5 can still be configured for analog input by their reset `ANSELH` state. Direction and analog/digital selection are separate controls.
-2. It controls analog selection for the analog-capable PORTB pins; clear the required implemented bits for digital operation.
-3. It documents the bank expected by the following access and prevents surrounding code changes from redirecting the access.
-4. No. Source selection and gate enable are separate. An alternate function should be changed only when its enabled state actually conflicts with the requested port function.
-5. It reads physical PORTB pin states, modifies the result, and writes it back, so readback affected by load/timing can corrupt intended output bits.
-6. A GPR stores the intended output byte. Arithmetic updates that GPR and `MOVWF PORTB` copies the complete intended value to the port.
-7. Zero. `INCF` does not update Carry.
-8. Unknown.
-9. It is an independent timeout mechanism. Software demonstrates progress by servicing it before timeout when the design uses that scheme.
+Every write has a reason tied to the desired function or documented reset state.
 
-# What to be able to explain without notes
+<a id="rmw-example"></a>
+### Worked example: why a shadow register helps
 
-- the peripheral-interrogation checklist;
-- why TRIS and analog selection are separate;
-- which configuration you must change versus which you should leave alone;
-- why reset-state notation matters;
-- why a shadow register is safer than `INCF PORTB,F`;
-- how you would prove the output configuration works on actual hardware.
+Suppose a heavily loaded output pin has not risen to the expected physical level when a read-modify-write instruction reads PORTB.
 
-# Reference
+If the program increments the physical port value directly, that unexpected readback can become part of the next software result.
 
-Microchip DS40001291H, especially the PORTB, I/O pin, register-summary/reset, instruction-set, and electrical-characteristics material relevant to the PIC16F883.
+With a shadow GPR:
+
+```text
+software state -> arithmetic -> full-byte write -> physical output
+```
+
+Physical readback no longer defines the arithmetic state.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="apply-verify-troubleshoot"></a>
+## 7. Apply, verify, and troubleshoot
+
+<a id="port-debug-checklist"></a>
+### PORTB debug checklist
+
+If a pin does not behave as expected:
+
+1. verify the package pin;
+2. verify the alternate-function labels;
+3. verify digital/analog selection;
+4. verify `TRISB`;
+5. verify bank selection and SFR writes;
+6. verify the intended PORT/shadow value;
+7. verify whether an enabled peripheral owns the pin;
+8. measure the actual pin voltage/waveform;
+9. compare the load with the electrical specifications;
+10. separate software-state problems from physical loading problems.
+
+<a id="measurement-proof"></a>
+### Prove the output with evidence
+
+For an incrementing byte, useful evidence can include:
+
+- LEDs with properly calculated current-limiting resistors;
+- logic analyzer traces;
+- oscilloscope measurement on one or more bits;
+- a frequency measurement on a predictable toggling bit.
+
+Predict the expected behavior before measuring it.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="practice"></a>
+## 8. Practice
+
+1. Why is `TRISB = 0xFF` after reset useful during bring-up?
+2. Why is `TRISB = 0xFF` insufficient to prove all PORTB pins are ready for ordinary digital input?
+3. What role does `ANSELH` play for analog-capable PORTB pins?
+4. Why should a peripheral selector be left alone when its peripheral is disabled and cannot affect the requested function?
+5. Why should a known output value be written before the output drivers are enabled?
+6. Why is `INCF PORTB,F` a poor reusable model for a software counter?
+7. What does a shadow register change about the data flow?
+8. Why is explicit bank selection useful?
+9. What does an `x` reset-state symbol mean?
+10. What electrical information must be checked before using a PIC pin to drive an LED directly?
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="answer-key"></a>
+## 9. Answer key
+
+1. It keeps the output drivers disabled while configuration is being established.
+2. Direction and analog/digital function are separate controls; analog-capable pins may still be configured for analog behavior.
+3. It controls analog selection for the implemented analog-capable pins; the relevant bits must be configured for ordinary digital use.
+4. Source/selector bits do not necessarily enable a peripheral. Changing unrelated controls adds complexity without solving a real conflict.
+5. It prevents undefined/unwanted data from becoming visible when the driver turns on.
+6. The read portion can reflect physical pin conditions, so hardware loading/timing can corrupt the value used for the next update.
+7. Arithmetic operates on software RAM state; the intended complete byte is then written to the port.
+8. It documents the intended target bank and avoids dependence on whatever bank earlier code happened to leave active.
+9. Unknown/undefined under the stated reset condition.
+10. Output-high/output-low behavior at the intended current, source/sink limits, aggregate current limits, supply limits, and the external load/resistor requirements.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="retrieval-check"></a>
+## 10. What you should be able to explain without notes
+
+You should be able to:
+
+- work from requested pin function back to required registers;
+- distinguish digital/analog selection from direction;
+- interpret reset-state notation;
+- classify related registers before changing them;
+- choose a safe initialization order;
+- explain PORT read-modify-write risk;
+- explain why a shadow GPR is safer for maintained software state;
+- prove output behavior with measurement;
+- check a load against device electrical limits.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="references"></a>
+## 11. References
+
+- Microchip Technology Inc., *PIC16F882/883/884/886/887 Data Sheet*, DS40001291H, especially Device Overview, I/O Ports/PORTB, register/reset summaries, instruction set, and Electrical Specifications — https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/40001291H.pdf
+  - Used for: PORTB pin functions, `TRISB`, `ANSELH`, reset behavior, read-modify-write context, and electrical limits.
+
+- Microchip Technology Inc., *Common 8-Bit PIC Microcontroller I/O Pin Issues*, TB3009 — https://www.microchip.com/en-us/application-notes/tb3009
+  - Used for: practical I/O-pin configuration and troubleshooting context.
+
+- Microchip Technology Inc., *Hardware Techniques for PICmicro Microcontrollers*, AN234 — https://www.microchip.com/en-us/application-notes/an234
+  - Used for: practical I/O hardware and load-interface context.
+
+- Microchip Developer Help, *8-bit PIC MCU Design Recommendations* — https://developerhelp.microchip.com/xwiki/bin/view/products/mcu-mpu/8bit-pic/design-recommendations/
+  - Used for: minimum connections, I/O, MCLR/ICSP, oscillator, and practical hardware-design guidance.
+
+[Back to top](#top) · [Topics index](README.md)
