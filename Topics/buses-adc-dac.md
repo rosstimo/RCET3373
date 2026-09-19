@@ -1,21 +1,34 @@
-# RCET 3373 - Buses, ADC, and DAC Self-Learning Guide
+<a id="top"></a>
 
-## What you should be able to do
+# RCET 3373 — Address, Data, and Control Buses
 
-After working through this guide, you should be able to:
+*Self-learning guide*
 
-- explain address, data, and control roles in a transaction;
-- determine basic address-space size from address width;
-- distinguish temporary and persistent memory roles at a system level;
-- calculate ideal ADC/DAC resolution using the course convention;
-- distinguish resolution from accuracy;
-- explain why finite digital codes cannot preserve arbitrary analog detail.
+[Topics index](README.md)
 
-For deeper memory coverage, see [Memory Systems](memory-systems.md).
+<a id="contents"></a>
+## Contents
 
-## Address, data, and control
+- [1. Why this matters](#why-this-matters)
+- [2. What you should be able to do](#learning-outcomes)
+- [3. Prerequisites and related topics](#prerequisites)
+- [4. Core model and vocabulary](#core-model)
+- [5. How it works](#how-it-works)
+- [6. Worked examples](#worked-examples)
+- [7. Apply, verify, and troubleshoot](#apply-verify-troubleshoot)
+- [8. Practice](#practice)
+- [9. Answer key](#answer-key)
+- [10. What you should be able to explain without notes](#retrieval-check)
+- [11. References](#references)
 
-A useful mental model is:
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="why-this-matters"></a>
+## 1. Why this matters
+
+Processors, memories, and peripherals exchange information through electrical and logical interfaces.
+
+A useful first model separates three jobs:
 
 ```text
 address = where
@@ -23,92 +36,254 @@ data    = what
 control = what operation / when
 ```
 
-A conceptual memory read looks like this:
+That model helps you reason about external memory, memory-mapped peripherals, register maps, and many serial/parallel interfaces without memorizing one device at a time.
 
-1. the processor presents an address;
-2. control indicates a read;
-3. the selected device presents data;
-4. the processor captures the data when it is valid.
+[Back to top](#top) · [Topics index](README.md)
 
-A write uses the same three roles, but data flows toward the selected destination.
+<a id="learning-outcomes"></a>
+## 2. What you should be able to do
 
-A memory-mapped peripheral register uses an address too. Reading or writing that address can interact with hardware instead of ordinary RAM.
+After working through this guide, you should be able to:
 
-## Address width determines the number of locations
+- explain the roles of address, data, and control information in a transaction;
+- calculate the number of unique locations represented by an N-bit address;
+- distinguish address width from data width;
+- explain a conceptual read and write transaction;
+- explain why memory-mapped peripheral registers behave like addresses even when they are not ordinary RAM;
+- identify why chip-select/enable signals and high-impedance outputs are needed on shared buses.
 
-If an address has `N` independent bits, it can select:
+[Back to top](#top) · [Topics index](README.md)
 
-```text
-2^N locations
-```
+<a id="prerequisites"></a>
+## 3. Prerequisites and related topics
 
-Examples:
+Before this guide, review:
 
-- 4 address bits -> 16 locations;
-- 8 address bits -> 256 locations.
+- [Digital Representation](digital-representation.md#core-model).
 
-The width of each stored location is a separate property.
+Related topics:
 
-## Memory roles in an embedded system
+- [Memory Systems](memory-systems.md#core-model);
+- [PIC16F883 data memory](pic16f883-architecture.md#data-memory);
+- [Data Memory, SFRs, and Banking](data-memory-sfrs-banking.md#core-model);
+- [Digital Timing](digital-timing.md#timing-diagrams);
+- [ADC and DAC Foundations](adc-dac-foundations.md#core-model).
 
-At a high level:
+[Back to top](#top) · [Topics index](README.md)
 
-- RAM is used for temporary working variables and state;
-- EEPROM is useful for data that should survive power loss and can be changed occasionally;
-- Flash is nonvolatile and is commonly used for program or block-oriented storage;
-- ROM is the general concept of fixed nonvolatile information.
+<a id="core-model"></a>
+## 4. Core model and vocabulary
 
-These categories describe practical roles. Device-specific behavior must still be checked in the applicable documentation.
+<a id="bus-roles"></a>
+### Address, data, and control
 
-## ADC and DAC: finite digital representations
+| Role | Question answered | Typical examples |
+| --- | --- | --- |
+| Address | Where? | memory location, register address, device select |
+| Data | What value? | instruction, variable, register contents |
+| Control | What operation and when? | read, write, enable, clock/strobe |
 
-For the course's ideal converter model:
+The physical implementation varies. A parallel bus may dedicate separate wires to each role. A serial protocol may encode address, data, and control at different times on the same wires.
 
-```text
-levels = 2^N
-ideal step ~= full-scale range / levels
-```
+<a id="address-space"></a>
+### Address width defines address-space size
 
-An N-bit converter has `2^N` levels but a maximum unsigned code of `2^N - 1`.
-
-### Example: 8-bit, 0 to 5 V
-
-```text
-levels = 256
-step ~= 5 V / 256
-     ~= 19.53 mV/count
-```
-
-### Example: 10-bit, 0 to 3.3 V
+If an address contains N independent bits:
 
 ```text
-levels = 1024
-step ~= 3.3 V / 1024
-     ~= 3.22 mV/count
+number of unique addresses = 2^N
 ```
 
-## Resolution is not accuracy
+The size of each location is a separate property.
 
-**Resolution** describes the ideal code step.
+For example:
 
-**Accuracy** describes closeness to the true or expected quantity under real system errors.
+```text
+8 address bits -> 256 locations
+16-bit data width -> 16 bits transferred per selected location
+```
 
-More bits can improve ideal resolution without guaranteeing an accurate measurement system.
+[Back to top](#top) · [Topics index](README.md)
 
-Quantization is the unavoidable mapping of a continuous quantity into a finite set of codes.
+<a id="how-it-works"></a>
+## 5. How it works
 
-## Practice
+<a id="read-transaction"></a>
+### Conceptual read transaction
 
-1. How many locations can a 10-bit address select?
-2. How many levels does a 12-bit ideal converter have?
-3. For an 8-bit 0-5 V converter, what is the ideal step size?
-4. What is the difference between 256 levels and maximum code 255?
-5. Why does increasing converter bit depth not automatically guarantee a more accurate measurement?
+A simplified parallel memory read is:
 
-## Answer key
+1. the bus master presents an address;
+2. control signals request a read and select the intended device;
+3. the selected device decodes the address;
+4. after its access delay, the device drives valid data;
+5. the bus master captures the data while it is valid;
+6. the device releases the shared data bus when the transaction ends.
 
-1. `2^10 = 1024` locations.
-2. `2^12 = 4096` levels.
-3. About `19.53 mV/count`.
-4. There are 256 distinct codes, numbered from 0 through 255.
-5. Accuracy also depends on the actual system errors, reference behavior, noise, and other non-ideal effects. More bits change ideal resolution, not every source of error.
+<a id="write-transaction"></a>
+### Conceptual write transaction
+
+A simplified write is:
+
+1. the bus master presents the destination address;
+2. the bus master drives the new data value;
+3. control signals identify a write and select the destination;
+4. the receiving device stores the data when timing requirements are satisfied.
+
+<a id="shared-bus"></a>
+### Shared buses require ownership
+
+If several devices share data wires, only the intended source should drive them at one time.
+
+Inactive devices commonly place outputs into a **high-impedance (Hi-Z)** state so another device can use the same conductors without electrical contention.
+
+<a id="memory-mapped-io"></a>
+### Memory-mapped I/O uses addresses for hardware
+
+An address does not have to refer to ordinary storage.
+
+In a memory-mapped system, reading or writing a particular address can interact with a hardware peripheral register.
+
+That is the key connection to the PIC16F883 SFR map: addresses select control/status registers that affect real hardware.
+
+**Visual reference:** See the data-memory maps in the [PIC16F882/883/884/886/887 Data Sheet](https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/40001291H.pdf).
+
+Focus on how ordinary GPR storage and hardware-control SFRs coexist in the same data-address space.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="worked-examples"></a>
+## 6. Worked examples
+
+<a id="address-width-example"></a>
+### Worked example: address-space size
+
+**Known**
+
+A system uses 10 address bits.
+
+**Find**
+
+The number of unique locations.
+
+**Reasoning**
+
+```text
+locations = 2^10
+          = 1024
+```
+
+**Result**
+
+The address can identify 1024 unique locations.
+
+<a id="memory-organization-example"></a>
+### Worked example: 8K × 16 organization
+
+**Known**
+
+```text
+8K locations
+16 bits per location
+```
+
+**Find**
+
+Address bits, data width, and total byte capacity.
+
+**Reasoning**
+
+```text
+8K = 8192 = 2^13
+```
+
+Therefore 13 address bits are needed.
+
+Each selected location transfers 16 bits, so the parallel data width is 16 bits.
+
+```text
+8192 locations × 2 bytes/location = 16384 bytes
+```
+
+**Result**
+
+- 13 address bits;
+- 16 data bits;
+- 16 KiB total storage.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="apply-verify-troubleshoot"></a>
+## 7. Apply, verify, and troubleshoot
+
+When a bus transaction is not working, separate the problem into roles:
+
+1. **Address:** Is the intended device/location actually selected?
+2. **Data:** Is the correct side driving the data and are the values valid?
+3. **Control:** Is the operation identified correctly?
+4. **Timing:** Are address/data/control relationships valid long enough?
+5. **Ownership:** Are two outputs fighting for the same shared wires?
+6. **Electrical interface:** Do voltage levels and loading satisfy the connected devices?
+
+The same checklist scales from a simple external-memory exercise to more complicated peripheral buses.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="practice"></a>
+## 8. Practice
+
+1. How many locations can a 4-bit address select?
+2. How many locations can a 12-bit address select?
+3. A memory is organized as 2K × 16. How many address bits are needed?
+4. For the same 2K × 16 memory, how many data bits are transferred per addressed word?
+5. During a read, which side normally drives the data bus?
+6. During a write, which side normally drives the data toward memory?
+7. Why do inactive devices use high-impedance outputs on a shared bus?
+8. Why can a peripheral register have an address even though it is not ordinary RAM?
+9. Give one example of a control signal or control concept in a transaction.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="answer-key"></a>
+## 9. Answer key
+
+1. `2^4 = 16` locations.
+2. `2^12 = 4096` locations.
+3. `2K = 2048 = 2^11`, so 11 address bits.
+4. 16 data bits.
+5. The selected memory/peripheral source drives the data toward the bus master.
+6. The bus master drives the new data toward the selected destination.
+7. Hi-Z disconnects inactive outputs so another device can drive the shared wires without contention.
+8. The address is a selection mechanism. The selected destination can be hardware state/control rather than ordinary storage.
+9. Examples include read/write direction, chip select, output enable, write enable, clock, or strobe.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="retrieval-check"></a>
+## 10. What you should be able to explain without notes
+
+You should be able to:
+
+- explain “address = where, data = what, control = what operation/when”;
+- calculate address-space size from address width;
+- distinguish address width from word/data width;
+- walk through a read transaction;
+- walk through a write transaction;
+- explain why Hi-Z matters on a shared data bus;
+- explain memory-mapped I/O in terms of address selection.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="references"></a>
+## 11. References
+
+- Microchip Technology Inc., *PICmicro Mid-Range MCU Family Reference Manual*, DS33023A, memory-organization and I/O material — https://ww1.microchip.com/downloads/en/DeviceDoc/33023A.pdf
+  - Used for: address/data/control and memory/peripheral organization context.
+
+- Microchip Technology Inc., *PIC16F882/883/884/886/887 Data Sheet*, DS40001291H, Memory Organization chapter — https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/40001291H.pdf
+  - Used for: device-specific examples of address maps, SFRs, GPRs, and memory-mapped hardware registers.
+
+- Microchip Technology Inc., *Using SRAM with a PIC16CXX*, TB011 — https://www.microchip.com/en-us/application-notes/tb011
+  - Used for: supplemental example of external address/data/control behavior using PIC I/O.
+
+[Back to top](#top) · [Topics index](README.md)
