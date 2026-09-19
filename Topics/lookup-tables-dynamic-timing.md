@@ -1,260 +1,99 @@
-# RCET3373 - Lookup Tables and Dynamic Software Timing - Self-Learning Guide
+<a id="top"></a>
 
-# What you should be able to do
+# RCET 3373 — Lookup Tables, Computed GOTO, and Dynamic Timing
+
+*Self-learning guide*
+
+[Topics index](README.md)
+
+<a id="contents"></a>
+## Contents
+
+- [1. Why this matters](#why-this-matters)
+- [2. What you should be able to do](#learning-outcomes)
+- [3. Prerequisites and related topics](#prerequisites)
+- [4. Core model and vocabulary](#core-model)
+- [5. How it works](#how-it-works)
+- [6. Worked examples](#worked-examples)
+- [7. Apply, verify, and troubleshoot](#apply-verify-troubleshoot)
+- [8. Practice](#practice)
+- [9. Answer key](#answer-key)
+- [10. What you should be able to explain without notes](#retrieval-check)
+- [11. References](#references)
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="why-this-matters"></a>
+## 1. Why this matters
+
+A program often needs to map a small input value to a different output value.
+
+Examples include:
+
+- button number -> delay count;
+- state number -> constant;
+- note index -> tone period;
+- menu selection -> configuration value.
+
+A lookup table stores that mapping compactly in program memory.
+
+On the PIC16F883, a classic assembly technique uses the table index to modify the low byte of the Program Counter and then returns the selected value with `RETLW`.
+
+This is useful because it combines several important architecture ideas:
+
+- program memory as data storage;
+- W as an index and return-value register;
+- `PCL` and `PCLATH`;
+- the hardware return stack;
+- linker placement;
+- complete-path timing.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="learning-outcomes"></a>
+## 2. What you should be able to do
 
 After working through this guide, you should be able to:
 
-- trace a nested `DECFSZ` delay and identify where each loop branches;
-- calculate the demonstrated delay from instruction-cycle counts;
-- explain why the selected inner count gives a 20 us outer-count resolution;
-- distinguish a lookup-table index from the value returned by the table;
-- explain how PCL and PCLATH participate in a computed GOTO;
-- trace `ADDWF PCL` + `RETLW` lookup-table execution;
-- recognize when a short table can still cross a PCL low-byte boundary;
-- convert a half-cycle delay to square-wave frequency;
-- explain why equal time steps do not create equal frequency steps;
-- identify why polling and other caller code change the measured waveform;
-- explain why hardware timers and interrupts become useful after software delays.
+- distinguish a table index from the value returned by the table;
+- preserve a selected value separately from a working countdown register;
+- explain the roles of `PCL` and `PCLATH`;
+- trace an `ADDWF PCL` + `RETLW` table;
+- explain how `RETLW` uses the hardware return stack;
+- recognize the 256-word low-PCL boundary hazard;
+- distinguish that boundary from the 2K-word `CALL`/`GOTO` page issue;
+- verify table placement in Program Memory or a listing/map;
+- convert a selected half-cycle delay into square-wave frequency;
+- explain why equal delay steps produce unequal frequency steps;
+- include lookup, polling, and caller code in complete waveform timing.
 
-# 1. Start with the control flow
+[Back to top](#top) · [Topics index](README.md)
 
-A two-level software delay uses one countdown inside another.
+<a id="prerequisites"></a>
+## 3. Prerequisites and related topics
 
-A representative structure is:
+Before this guide, review:
 
-```asm
-    movlw   N
-    movwf   out_count
+- [Nested-Loop Software Delays](nested-loop-delays.md#nested-formula);
+- [Subroutines and the Return Stack](subroutines-return-stack.md#call-return-model);
+- [PIC16F883 Program Counter and stack](pic16f883-architecture.md#program-counter-stack).
 
-outer_delay:
-    movlw   I
-    movwf   in_count
+Related topics:
 
-inner_delay:
-    decfsz  in_count, F
-    goto    inner_delay
+- [Timing Measurement and Compiled-Code Verification](measurement-c-timing.md#measurement-strategy);
+- [PIC16F883 Timers](timers.md#core-model) for the hardware-timer alternative to long software waits.
 
-    nop
-    decfsz  out_count, F
-    goto    outer_delay
-```
+[Back to top](#top) · [Topics index](README.md)
 
-The important branch targets are:
+<a id="core-model"></a>
+## 4. Core model and vocabulary
 
-- the inner `GOTO` returns to `DECFSZ in_count`;
-- the outer `GOTO` returns to **reload the inner count**;
-- the outer `GOTO` must **not** return to the code that reloads `out_count`.
+<a id="persistent-selection"></a>
+### Persistent selection versus working countdown
 
-If `out_count` is reloaded every time, it never progresses toward zero.
+Suppose a keypad selects a delay.
 
-A useful flowchart is:
-
-```text
-load outer count
-      |
-load inner count <-------------------+
-      |                               |
-decrement inner                      |
-      |                               |
-inner zero? -- no -------------------+
-      |
-     yes
-      |
-   NOP / outer work
-      |
-decrement outer
-      |
-outer zero?
-  | no
-  +----------> load inner count
-  |
- yes
-  |
- done
-```
-
-# 2. Count the executed instructions
-
-For PIC16F883 at the current 4 MHz oscillator:
-
-```text
-TCY = 4/FOSC = 1 us
-```
-
-Useful instruction timing:
-
-```text
-MOVLW   1 cycle
-MOVWF   1 cycle
-MOVF    1 cycle
-NOP     1 cycle
-GOTO    2 cycles
-CALL    2 cycles
-RETURN  2 cycles
-RETLW   2 cycles
-DECFSZ  1 cycle normally
-DECFSZ  2 cycles when the zero-result skip is taken
-```
-
-A countdown loop using:
-
-```asm
-    decfsz  count, F
-    goto    loop
-```
-
-uses:
-
-```text
-3 cycles for each nonfinal iteration
-2 cycles for the final successful DECFSZ
-```
-
-So the countdown part alone is:
-
-```text
-3(n-1) + 2 = 3n - 1 cycles
-```
-
-# 3. Derive the W03D03 nested-delay equation
-
-Use the explicit timing boundary:
-
-> Begin at the first `MOVLW N` and end after the final successful outer `DECFSZ` completes.
-
-Break the code into regions.
-
-## Outer setup
-
-```asm
-movlw N
-movwf out_count
-```
-
-Cost:
-
-```text
-2 cycles
-```
-
-## Inner setup + inner countdown
-
-Each outer iteration executes:
-
-```asm
-movlw I
-movwf in_count
-```
-
-plus the inner countdown.
-
-So:
-
-```text
-2 + (3I - 1) = 3I + 1 cycles
-```
-
-## NOP
-
-The NOP is inside the outer loop, so it occurs once per outer iteration:
-
-```text
-N cycles total
-```
-
-## Outer countdown control
-
-Across N outer iterations:
-
-```text
-3N - 1 cycles
-```
-
-## Combine the pieces
-
-```text
-T = 2 + N(3I + 1) + N + (3N - 1)
-```
-
-Simplify:
-
-```text
-T = N(3I + 5) + 1
-```
-
-# 4. Design a 20 us outer-count resolution
-
-The coefficient multiplied by N tells you how much the delay changes when N changes by one:
-
-```text
-Delta_N = 3I + 5
-```
-
-If you want:
-
-```text
-Delta_N = 20 cycles
-```
-
-solve:
-
-```text
-3I + 5 = 20
-3I = 15
-I = 5
-```
-
-Therefore:
-
-```text
-Tcore = 20N + 1 cycles
-```
-
-At 4 MHz:
-
-```text
-Tcore = 20N + 1 us
-```
-
-Examples:
-
-```text
-N=1 -> 21 us
-N=2 -> 41 us
-N=3 -> 61 us
-N=4 -> 81 us
-```
-
-The total is not 20, 40, 60, 80. The **change** is 20. The `+1` is one-time/final-path overhead in this explicitly defined interval.
-
-# 5. Effective 8-bit countdown range
-
-For this `DECFSZ` countdown:
-
-```text
-loaded 0x01 -> 1 decrement
-loaded 0x02 -> 2 decrements
-...
-loaded 0xFF -> 255 decrements
-loaded 0x00 -> 256 decrements
-```
-
-Why does zero mean 256 here?
-
-The first decrement of `0x00` wraps to `0xFF`, which is not zero. The counter then continues down until a later decrement changes `0x01` to `0x00`, causing the successful skip.
-
-So effective N is 1..256.
-
-With `Tcore = 20N + 1 us`:
-
-```text
-minimum = 21 us
-maximum = 5121 us
-```
-
-# 6. A selected delay needs persistent storage
-
-Suppose a keypad selects a delay value. You cannot store that selection only in `out_count`, because the delay routine destroys `out_count` while counting down.
+Do not store the selected delay only in the same register that the delay loop destroys while counting down.
 
 Use separate roles:
 
@@ -264,68 +103,71 @@ out_count     = working outer countdown
 in_count      = working inner countdown
 ```
 
-Representative code:
+Then the selected value can reload the working counter each time:
 
 ```asm
 half_cycle_delay:
     movf    current_count, W
     movwf   out_count
-    ; run nested delay
+    ; run delay
     return
 ```
 
-`MOVF current_count,W` reads the file register into W.
+`MOVF current_count,W` reads a register value into W.
 
-`MOVLW` would be wrong here because `MOVLW` loads a literal constant, not the contents of another register.
+`MOVLW` would load a literal constant instead.
 
-# 7. What a lookup table is doing
+<a id="lookup-table"></a>
+### A lookup table maps one value to another
 
-The goal is to convert one small integer into another value.
+Example mapping:
 
-Example:
+| Zero-based index | Returned delay count |
+| ---: | ---: |
+| 0 | 250 |
+| 1 | 125 |
+| 2 | 12 |
 
-```text
-button/key index 0 -> delay count 250
-button/key index 1 -> delay count 125
-button/key index 2 -> delay count 12
-```
+The index and returned value are different quantities.
 
-The input index and returned delay value are different things.
+The table lets a small integer select a constant stored in program memory.
 
-The table is a compact way to store that mapping in program memory.
+[Back to top](#top) · [Topics index](README.md)
 
-# 8. Program Counter, PCL, and PCLATH
+<a id="how-it-works"></a>
+## 5. How it works
 
-PIC16F883 has a 13-bit Program Counter.
+<a id="pcl-pclath"></a>
+### Program Counter, `PCL`, and `PCLATH`
 
-Think of it as:
+The PIC16F883 Program Counter is 13 bits wide.
+
+For a write to `PCL`, think of the destination as:
 
 ```text
 PC = [ upper 5 bits ][ lower 8 bits ]
           ^                 ^
        PCLATH              PCL
-   during a PCL write
 ```
 
 More precisely:
 
-- `PCL` is the readable/writable low 8-bit portion;
-- `PC<12:8>` is not directly readable/writable;
+- `PCL` exposes the low eight PC bits;
 - `PCLATH` is a separate readable/writable holding register;
-- when software writes PCL, `PCLATH<4:0>` supplies the upper PC bits.
+- when software writes `PCL`, `PCLATH<4:0>` supplies the upper PC bits.
 
-For `CALL` and `GOTO`, a different loading path is used:
+For ordinary `CALL` and `GOTO`, the loading path is different: the instruction contains 11 destination bits and `PCLATH<4:3>` supplies the upper bits.
 
-- the instruction contains 11 destination bits;
-- `PCLATH<4:3>` supplies the upper two bits.
+That creates the separate 2K-word page issue described in the [subroutine guide](subroutines-return-stack.md#pclath-call-goto).
 
-This creates a 2K-word page issue for normal `CALL`/`GOTO` targets.
+**Official visual reference:** In Section 2.0, **Memory Organization**, of the [PIC16F882/883/884/886/887 Data Sheet](https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/40001291H.pdf), inspect the Program Counter loading diagram.
 
-# 9. Computed GOTO with `ADDWF PCL`
+Focus on the different paths used when writing `PCL` versus executing `CALL` or `GOTO`.
 
-A lookup table can use the input index as an offset from the table's current location.
+<a id="computed-goto"></a>
+### Computed GOTO with `ADDWF PCL`
 
-Representative code:
+A classic table is:
 
 ```asm
     movf    button_value, W
@@ -339,28 +181,29 @@ lookup_delay:
     retlw   0x0C
 ```
 
-If W contains zero, execution continues at the first `RETLW`.
+Trace the index:
 
-If W contains one, execution continues at the second `RETLW`.
+```text
+W = 0 -> first RETLW -> returns 0xFA
+W = 1 -> second RETLW -> returns 0x7D
+W = 2 -> third RETLW -> returns 0x0C
+```
 
-If W contains two, execution continues at the third `RETLW`.
+`ADDWF PCL,F` changes the low Program Counter byte, so execution lands on one table entry.
 
-`RETLW 0x0C` does two things:
+`RETLW k` then:
 
-1. loads `0x0C` into W;
-2. returns to the caller using the hardware return stack.
+1. loads literal `k` into W;
+2. returns through the hardware return stack.
 
-The caller then stores W into `current_count`.
+The caller stores W in `current_count`.
 
-# 10. The low-PCL rollover hazard
+<a id="pcl-boundary"></a>
+### The 256-word low-PCL boundary hazard
 
-A common oversimplification is:
+A table is not safe merely because it contains fewer than 256 entries.
 
-> My table only has 16 entries, so it cannot have a paging problem.
-
-That is not always true.
-
-A computed GOTO writes the low 8-bit PCL. If the table starts near the end of a 256-word low-byte block, later entries can cross:
+Suppose the table begins near:
 
 ```text
 ... 0x00FE
@@ -375,406 +218,236 @@ The low byte rolls from:
 0xFF -> 0x00
 ```
 
-If the upper bits are not handled correctly, the computed jump can land in the wrong place.
+An `ADDWF PCL` operation changes the low byte. It does not automatically perform a full 13-bit integer addition with a carry into the upper PC bits.
 
-The PIC16F883 data sheet explicitly warns about this.
+If `PCLATH` does not contain the correct upper value, the computed branch can land in the wrong 256-word block.
 
-For the beginner course implementation, the clean solution is:
+For introductory RCET work:
 
-- keep the complete table within one 256-word low-byte block;
-- verify its linked address in MPLAB X Program Memory or the listing.
+> Keep the complete `ADDWF PCL` + `RETLW` table inside one 256-word low-PCL block unless the code explicitly handles the upper-PC requirement.
 
-Do not confuse this 256-word low-PCL boundary with the 2K-word `CALL/GOTO` page boundary. They are different architecture limits.
+This 256-word boundary is **not** the same as the 2K-word `CALL`/`GOTO` page boundary.
 
-# 11. `$` is an assembler location counter
+<a id="location-counter"></a>
+### `$` is an assembler location counter
 
-The assembler permits:
+PIC Assembler can use `$` to refer to the current assembly location.
 
-```asm
-goto $-1
-```
-
-On a mid-range PIC, `$-1` means one instruction before the current assembler location.
-
-So:
+For example:
 
 ```asm
-    decfsz count, F
-    goto   $-1
+    decfsz  count,F
+    goto    $-1
 ```
 
-can form a tiny countdown loop without a label.
+The assembler resolves `$-1` to the previous instruction-word location and emits an ordinary `GOTO`.
 
-Important:
+Important distinctions:
 
-- `$` is not a runtime read of the Program Counter;
-- the assembler resolves the target;
-- a normal `GOTO` is emitted;
-- labels are often clearer for larger structures.
+- `$` is an assembler concept;
+- it is not a runtime read of the Program Counter;
+- labels are usually clearer for larger control-flow structures.
 
-# 12. Convert half-cycle time to frequency
+[Back to top](#top) · [Topics index](README.md)
 
-If the delay occurs once between each output toggle, the delay approximates a half-cycle.
+<a id="worked-examples"></a>
+## 6. Worked examples
 
-For the simplified core-only model:
-
-```text
-t_half = 20N + 1 us
-```
-
-The full period is:
-
-```text
-Tperiod = 2 t_half
-```
-
-Frequency is:
-
-```text
-f = 1 / Tperiod
-```
-
-## Worked example: N = 12
-
-Known:
-
-```text
-N = 12
-```
-
-Half-cycle:
-
-```text
-t_half = 20(12) + 1
-       = 241 us
-```
-
-Period:
-
-```text
-Tperiod = 482 us
-```
-
-Frequency:
-
-```text
-f = 1/(482 us)
-  = 2074.69 Hz
-```
-
-So the core-only nominal output is about:
-
-```text
-2.075 kHz
-```
-
-# 13. Why high-frequency presets are hard to hit
-
-The half-cycle time changes in equal 20 us steps:
-
-```text
-21, 41, 61, 81, ... us
-```
-
-But the corresponding frequencies are:
-
-```text
-N=1 -> 23.810 kHz
-N=2 -> 12.195 kHz
-N=3 ->  8.197 kHz
-N=4 ->  6.173 kHz
-```
-
-The first one-count change reduces frequency by more than 11 kHz.
-
-At the low-frequency end:
-
-```text
-N=250 -> 99.98 Hz
-N=251 -> about 99.58 Hz
-```
-
-The same 20 us time step changes frequency by less than 1 Hz.
-
-The reason is the reciprocal relationship:
-
-```text
-f = 1/(2t)
-```
-
-A constant time resolution is not a constant frequency resolution.
-
-If accurate high-frequency presets matter, the timing resolution must be smaller or the timing method must change.
-
-# 14. The named delay is not the whole waveform
-
-Suppose you calculate:
-
-```text
-Tcore = 20N + 1 us
-```
-
-Then your program also executes:
-
-```text
-toggle output
-scan buttons/keypad
-make branch decisions
-call lookup table
-ADDWF PCL
-RETLW
-store current_count
-CALL delay
-RETURN from delay
-branch back to main
-```
-
-The oscilloscope sees the time between output edges, not the time inside the code section named `delay`.
-
-Therefore:
-
-> Count every executed instruction between the two measurement edges.
-
-If the input-scanning code sometimes takes different branch paths, the edge-to-edge time can vary. That is jitter.
-
-# 15. Busy-wait delay also reduces responsiveness
-
-While the CPU is inside a software delay, it is spending instruction cycles doing the delay.
-
-If input is checked only after the delay finishes, a newly pressed button cannot be noticed until execution returns to the input check.
-
-For the longest W03D03 core delay:
-
-```text
-5121 us
-```
-
-the program is tied up for about 5.1 ms before even counting the surrounding caller/input path.
-
-This may or may not be acceptable. The system requirement decides that.
-
-# 16. Why timers and interrupts come next
-
-Software delay loops are useful because they make instruction timing visible. They also expose their own limitations:
-
-- the CPU is busy waiting;
-- every added instruction changes the timing;
-- variable code paths create variable timing;
-- input/service response is limited by how often the loop gets back to the work.
-
-A hardware timer can count time independently while the CPU executes other instructions.
-
-An interrupt can notify the CPU when a timer or peripheral event requires service.
-
-That is why timer and interrupt architecture is the natural next step.
-
-# Practice problems
-
-## 1. Branch target
-
-A nested delay has this structure:
-
-```text
-load outer
-load inner
-run inner countdown
-decrement outer
-if outer not zero -> ?
-```
-
-Where should the nonzero outer branch go?
-
-A. load outer  
-B. load inner  
-C. end
-
-## 2. Timing resolution
-
-For:
-
-```text
-T = N(3I + 5) + 1
-```
-
-what `I` gives an outer-count resolution of 14 cycles?
-
-## 3. Core delay
-
-Using `Tcore = 20N + 1 us`, calculate the core delay for:
-
-```text
-N = 37
-```
-
-## 4. Half-cycle frequency
-
-A half-cycle is 401 us. Ignoring all other overhead, calculate the square-wave frequency.
-
-## 5. Effective count
-
-How many decrements occur when an 8-bit `DECFSZ` countdown starts from `0x00`?
-
-## 6. Persistent selection
-
-Why should `current_count` and `out_count` be separate registers?
-
-## 7. Lookup trace
+<a id="lookup-trace-example"></a>
+### Worked example: trace index 2
 
 Given:
 
 ```asm
 lookup:
-    addwf   PCL, F
+    addwf   PCL,F
     retlw   0x20
     retlw   0x40
     retlw   0x60
 ```
 
-What value is returned in W when the zero-based table index is 2?
-
-## 8. PCL/PCLATH
-
-True or false: Because `PC<12:8>` cannot be directly written, PCLATH is also not writable.
-
-Explain.
-
-## 9. Table boundary
-
-A 16-entry table begins close enough to address `0x01FF` that some entries are linked at `0x0200` and above. Why can that matter for an `ADDWF PCL` table?
-
-## 10. `$`
-
-What does `$` mean in pic-as, and what does `goto $-1` do on PIC16F883?
-
-## 11. Whole waveform timing
-
-A student says:
-
-> My delay is exactly 500 us, so my square wave must be exactly 1 kHz.
-
-List at least four pieces of code that might make that conclusion wrong.
-
-## 12. Resolution
-
-Why does a 20 us time step cause a much larger frequency jump near 20 kHz than near 100 Hz?
-
-# Answer key
-
-## 1
-
-**B. load inner.** The inner counter must be reloaded for every outer iteration. Reloading the outer counter would destroy its progress toward zero.
-
-## 2
-
-The N coefficient is the resolution:
+**Known**
 
 ```text
-3I + 5 = 14
-3I = 9
-I = 3
+W = 2
 ```
 
-## 3
+**Reasoning**
 
-```text
-T = 20(37) + 1
-  = 741 us
-```
+The index offsets execution to the third `RETLW`.
 
-## 4
+`RETLW 0x60` loads W and returns.
 
-Full period:
-
-```text
-T = 2(401 us) = 802 us
-```
-
-Frequency:
-
-```text
-f = 1/(802 us)
-  ≈ 1246.88 Hz
-  ≈ 1.247 kHz
-```
-
-## 5
-
-**256 decrements.** `0x00` first decrements to `0xFF`, then continues until a later decrement reaches `0x00` and triggers the skip.
-
-## 6
-
-`out_count` is destroyed as the delay counts down. `current_count` preserves the selected value so it can reload `out_count` for the next half-cycle.
-
-## 7
-
-Index 2 selects the third entry:
+**Result**
 
 ```text
 W = 0x60
 ```
 
-`RETLW` loads the literal into W and returns.
+<a id="dynamic-frequency"></a>
+### Worked example: delay selection to frequency
 
-## 8
-
-**False.** The upper Program Counter bits are not directly writable, but PCLATH is a separate readable/writable holding register. PCLATH supplies upper PC bits during particular Program Counter loads.
-
-## 9
-
-The low byte of the address rolls from `0xFF` to `0x00`. A computed GOTO writes PCL, so the upper address bits must be correct through PCLATH. A short table can cross this boundary depending on placement.
-
-## 10
-
-`$` is the assembler's current location within the active program section. On a mid-range PIC, `$-1` means one instruction word before the current location. The assembler emits a normal `GOTO` to that address.
-
-## 11
-
-Possible omitted timing:
-
-- output toggle instruction(s);
-- keypad/button scan;
-- conditional branches;
-- LUT call;
-- `ADDWF PCL`;
-- `RETLW`;
-- `MOVWF current_count`;
-- delay `CALL` and `RETURN`;
-- branch back to main.
-
-The correct answer depends on the exact executed path between output edges.
-
-## 12
-
-Frequency is reciprocal in period:
+Suppose a selected delay produces a half-cycle of:
 
 ```text
-f = 1/(2t)
+t_half = 241 us
 ```
 
-At short times, a 20 us change is a large fraction of the period. At long times, it is a small fraction. Equal time steps therefore produce unequal frequency steps.
+The full period is:
 
-# What to be able to explain without notes
+```text
+T = 2 × 241 us
+  = 482 us
+```
 
-You should be able to explain:
+Frequency:
 
-- why the outer loop branches to inner-count reload rather than outer-count reload;
-- where `T = N(3I + 5) + 1` comes from;
-- why `I=5` produces a 20 us outer-count step at 4 MHz;
-- what `current_count`, `out_count`, and `in_count` each do;
-- how an index reaches an `RETLW` entry through `ADDWF PCL`;
-- what PCL and PCLATH each contribute to the Program Counter;
-- why a short table can still cross a low-PCL boundary;
-- why 21 us half-cycle corresponds to about 23.81 kHz rather than about 47.6 kHz;
-- why polling and other caller code must be included in measured waveform timing;
-- why timers and interrupts are the next logical architecture topic.
+```text
+f = 1 / 482 us
+  ≈ 2074.69 Hz
+  ≈ 2.075 kHz
+```
 
-# References used to build this guide
+<a id="frequency-resolution"></a>
+### Equal time steps do not create equal frequency steps
 
-Microchip PIC16F882/883/884/886/887 Data Sheet:  
-https://ww1.microchip.com/downloads/en/devicedoc/41291f.pdf
+Suppose a selector changes half-cycle time in equal 20 us increments.
 
-MPLAB XC8 PIC Assembler User's Guide:  
-https://ww1.microchip.com/downloads/aemDocuments/documents/DEV/ProductDocuments/UserGuides/MPLAB-XC8-PIC-Assembler-Users-Guide-DS50002974.pdf
+Near short delays, 20 us is a large fraction of the total period, so the frequency change is large.
 
-Current RCET3375 application context:  
-`LabAssignments/Lab05-Muzak.md`
+Near long delays, the same 20 us is a small fraction of the total period, so the frequency change is small.
+
+The reason is the reciprocal relationship:
+
+```text
+f = 1 / (2t_half)
+```
+
+A constant time resolution is not a constant frequency resolution.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="apply-verify-troubleshoot"></a>
+## 7. Apply, verify, and troubleshoot
+
+<a id="table-placement-check"></a>
+### Verify table placement after linking
+
+Before trusting a computed-GOTO table:
+
+1. build the project;
+2. inspect Program Memory or the map/listing;
+3. record the address of `ADDWF PCL`;
+4. record the address of the final `RETLW`;
+5. confirm the complete table remains inside one low-PCL 256-word block unless the code handles upper-PC changes;
+6. simulate the first, middle, and last valid indices;
+7. test an invalid/out-of-range path if the caller can produce one.
+
+The [RCET computed-GOTO reference](https://github.com/rosstimo/pic_projects/blob/main/References/PIC16F883-Computed-GOTO.md) includes a useful deliberate-failure simulation exercise.
+
+<a id="whole-path-timing"></a>
+### The lookup routine is not the whole waveform
+
+A measured output path may include:
+
+```text
+input scan
+-> branch decisions
+-> CALL lookup
+-> ADDWF PCL
+-> selected RETLW
+-> store selected value
+-> CALL delay
+-> delay body
+-> RETURN
+-> output update
+-> main-loop branch
+```
+
+The oscilloscope measures the complete path between output edges.
+
+If polling or branch paths take different amounts of time, that variation can appear as jitter even when the named delay routine itself is perfectly repeatable.
+
+<a id="polling-responsiveness"></a>
+### Busy waits reduce responsiveness
+
+While the CPU is inside a software delay, it is not checking a new input unless the design explicitly does so inside that path.
+
+Longer waits therefore increase worst-case polling response time.
+
+That limitation is one reason the course transitions from software delays to [hardware timers](timers.md#core-model) and [interrupts](interrupts-context-saving.md#core-model).
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="practice"></a>
+## 8. Practice
+
+1. Why should `current_count` and `out_count` be separate registers?
+2. In an `ADDWF PCL` table, what is the difference between the input index and the returned value?
+3. What does `PCL` represent?
+4. What role does `PCLATH` play when software writes `PCL`?
+5. Given the three-entry table in this guide, what value returns for index 2?
+6. Why can a 16-entry table still have a low-PCL boundary problem?
+7. Why is the 256-word computed-GOTO boundary different from the 2K-word `CALL`/`GOTO` page issue?
+8. What does `$` mean to PIC Assembler?
+9. A half-cycle is 401 us. Ignoring other overhead, calculate square-wave frequency.
+10. Why do equal 20 us half-cycle steps cause larger frequency changes at high frequency than at low frequency?
+11. Name four pieces of code outside a delay loop that may still affect measured edge-to-edge timing.
+12. How would you prove that the first and last entries of a computed-GOTO table land correctly?
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="answer-key"></a>
+## 9. Answer key
+
+1. The working countdown destroys `out_count`; `current_count` preserves the selected value so it can be reused.
+2. The index chooses an entry; the `RETLW` literal is the value returned by that entry.
+3. `PCL` is the readable/writable low eight-bit portion of the Program Counter.
+4. `PCLATH<4:0>` supplies the upper PC bits when software writes `PCL`.
+5. `0x60`.
+6. Placement, not only table length, matters. A short table beginning near a low-byte `0xFF` boundary can straddle two 256-word blocks.
+7. `ADDWF PCL` writes the low eight PC bits; `CALL/GOTO` use an 11-bit destination plus different upper bits from `PCLATH`.
+8. The current assembler location; `$-1` refers to the previous instruction-word location.
+9. `T = 802 us`, so `f ≈ 1246.88 Hz ≈ 1.247 kHz`.
+10. Frequency is reciprocal in period, so the same time change is a larger fraction of a short period.
+11. Examples: input scan, conditional branches, lookup `CALL`, `ADDWF PCL`, `RETLW`, result storage, delay `CALL/RETURN`, output update, loop branch.
+12. Inspect linked Program Memory/listing and simulate boundary indices while observing the actual PC target and returned W value.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="retrieval-check"></a>
+## 10. What you should be able to explain without notes
+
+You should be able to:
+
+- distinguish persistent selection from working countdown state;
+- trace index -> `ADDWF PCL` -> selected `RETLW` -> returned W;
+- explain how `PCL` and `PCLATH` form the computed target;
+- explain the low-PCL boundary hazard;
+- distinguish 256-word and 2K-word control-flow boundaries;
+- explain `$` as an assembler location counter;
+- convert half-cycle delay to frequency;
+- explain nonuniform frequency resolution;
+- include caller/polling/lookup overhead in measured waveform timing.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="references"></a>
+## 11. References
+
+- Microchip Technology Inc., *PIC16F882/883/884/886/887 Data Sheet*, DS40001291H, Memory Organization, Program Counter/PCL/PCLATH, and Instruction Set Summary — https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/40001291H.pdf
+  - Used for: PC/PCL/PCLATH behavior, `ADDWF`, `RETLW`, control-flow timing, and computed-GOTO cautions.
+
+- Microchip Technology Inc., *PICmicro Mid-Range MCU Family Reference Manual*, DS33023A — https://ww1.microchip.com/downloads/en/DeviceDoc/33023A.pdf
+  - Used for: classic mid-range Program Counter and computed-control-flow architecture.
+
+- Microchip Technology Inc., *Implementing a Table Read*, AN556 — https://ww1.microchip.com/downloads/en/AppNotes/00556e.pdf
+  - Used for: `ADDWF PCL`, `RETLW`, PCLATH, table placement, and computed-GOTO examples.
+
+- Microchip Technology Inc., *MPLAB XC8 PIC Assembler User's Guide*, DS50002974 — https://ww1.microchip.com/downloads/aemDocuments/documents/DEV/ProductDocuments/UserGuides/MPLAB-XC8-PIC-Assembler-Users-Guide-DS50002974.pdf
+  - Used for: assembler location-counter `$` and current toolchain syntax.
+
+- [PIC16F883 Computed GOTO and `RETLW` Tables](https://github.com/rosstimo/pic_projects/blob/main/References/PIC16F883-Computed-GOTO.md)
+  - RCET shared implementation/reference material for table placement, simulator verification, and whole-path timing.
+
+[Back to top](#top) · [Topics index](README.md)
