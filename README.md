@@ -6,7 +6,7 @@ This repository contains reviewed/published course material. Instructor planning
 
 ## Start here
 
-- [`Topics/`](Topics/README.md) - student self-learning guides and published topic references through PIC16F883 timers.
-- [`Capstone/`](Capstone/) - published capstone material.
+- [`Topics/`](Topics/README.md) — student self-learning guides and published topic references across the course's ideal embedded-systems topic spine.
+- [`Capstone/`](Capstone/) — published capstone material.
 
 For a specific assignment or Canvas item, follow the linked file in this repository and the current classroom/Canvas instructions. When older material conflicts with a current published instruction, use the current published instruction.
