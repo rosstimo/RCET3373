@@ -1,229 +1,382 @@
+<a id="top"></a>
 
-# Teaching 2's Complement – Conversation Notes
+# RCET 3373 — Two's Complement
 
-## Explaining 2's Complement
+*Self-learning guide*
 
-2’s complement is the digital equivalent of humans deciding negative numbers should exist, but with fewer tears and way more logic gates.
+[Topics index](README.md)
 
-### The Problem
-Computers only know **0s and 1s**. If you want them to handle both positive and negative integers, you need a system. The simplest idea—just slap a sign bit on the front—creates ugly problems when you try to add numbers. Engineers don’t like ugly.
+<a id="contents"></a>
+## Contents
 
-### The Trick
-2’s complement solves this by making **addition and subtraction use the exact same circuitry**. No separate “minus” logic needed.
+- [1. Why this matters](#why-this-matters)
+- [2. What you should be able to do](#learning-outcomes)
+- [3. Prerequisites and related topics](#prerequisites)
+- [4. Core model and vocabulary](#core-model)
+- [5. How it works](#how-it-works)
+- [6. Worked examples](#worked-examples)
+- [7. Apply, verify, and troubleshoot](#apply-verify-troubleshoot)
+- [8. Practice](#practice)
+- [9. Answer key](#answer-key)
+- [10. What you should be able to explain without notes](#retrieval-check)
+- [11. References](#references)
 
-Steps to find the 2’s complement (the negative of a binary number):
-1. Write the number in binary.
-2. Flip all the bits (0 → 1, 1 → 0).
-3. Add 1.
+[Back to top](#top) · [Topics index](README.md)
 
-That’s it. The result is the negative of the original number.
+<a id="why-this-matters"></a>
+## 1. Why this matters
 
-### Example
-+5 in binary:  
-```
-00000101
-```
-Flip the bits:  
-```
-11111010
-```
-Add 1:  
-```
-11111011
-```
-That’s **-5** in 2’s complement.
+A fixed-width register contains bits, not a plus sign or minus sign.
 
-### Why It Works
-When you add +5 and -5 in binary:
-```
-  00000101   (+5)
-+ 11111011   (-5)
-------------
-  00000000   (carry bit falls off)
-```
-No special subtraction logic, no extra rules. Just clean addition.
+When those bits are interpreted as a signed integer, embedded systems commonly use **two's complement**. The representation is useful because the same binary addition hardware can handle both positive and negative values.
 
-### Range
-For **N bits**, 2’s complement represents:
-- Minimum: `-2^(N-1)`
-- Maximum: `2^(N-1) - 1`
+The important skill is not memorizing that “MSB = 1 means negative.” It is being able to reason about:
 
-So for 8 bits:  
-Range is -128 to +127.
+- the selected bit width;
+- the signed range;
+- how a negative value is encoded;
+- how to interpret a stored pattern;
+- how addition/subtraction behave when the result wraps at the fixed width.
 
----
+[Back to top](#top) · [Topics index](README.md)
 
-## Example: 9 - 8
+<a id="learning-outcomes"></a>
+## 2. What you should be able to do
 
-### Step 1. Write 9 in binary  
-```
-00001001   (this is 9)
-```
+After working through this guide, you should be able to:
 
-### Step 2. Write 8 in binary  
-```
-00001000   (this is 8)
-```
+- state the two's-complement range for an N-bit signed integer;
+- encode a negative integer at a specified bit width;
+- decode a two's-complement bit pattern;
+- perform subtraction by adding the two's complement of the subtrahend;
+- explain why the carry out of the fixed width is discarded;
+- distinguish arithmetic wraparound from the signed interpretation of the result;
+- recognize when a calculation exceeds the representable signed range.
 
-### Step 3. Subtraction is really addition  
-Instead of doing `9 - 8`, we do `9 + (-8)`.
+[Back to top](#top) · [Topics index](README.md)
 
-### Step 4. Find -8 (2’s complement of 8)  
-Start with 8:  
-```
-00001000
-```
-Flip:  
-```
-11110111
-```
-Add 1:  
-```
-11111000
-```
-This is -8.
+<a id="prerequisites"></a>
+## 3. Prerequisites and related topics
 
-### Step 5. Add 9 and -8  
-```
-  00001001
-+ 11111000
-----------
-  111111001
-```
-Drop the carry (8 bits):  
-```
-00000001
-```
-**Answer: 1**
+Before this guide, review:
 
----
+- [binary, hexadecimal, and fixed-width representation](digital-representation.md#core-model).
 
-## Example: 8 - 9
+Related topics:
 
-### Step 1. Write 8 in binary  
-```
-00001000
+- [PIC16F883 STATUS flags](pic16f883-architecture.md#status-flags);
+- [instruction timing and arithmetic flow](instruction-timing-software-delays.md#instruction-cycle).
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="core-model"></a>
+## 4. Core model and vocabulary
+
+For an N-bit two's-complement integer:
+
+```text
+minimum = -2^(N-1)
+maximum =  2^(N-1) - 1
 ```
 
-### Step 2. Write 9 in binary  
-```
-00001001
-```
+For 8 bits:
 
-### Step 3. Subtraction = addition  
-So `8 - 9` → `8 + (-9)`.
-
-### Step 4. Find -9  
-```
-00001001   (9)
-11110110   (flip)
-11110111   (add 1 = -9)
+```text
+-128 through +127
 ```
 
-### Step 5. Add  
-```
-  00001000
-+ 11110111
-----------
-  111111111
-```
-Drop the carry:  
-```
-11111111
+The most-significant bit contributes a negative weight in the signed interpretation:
+
+```text
+bit weights for 8-bit two's complement:
+
+-128  64  32  16  8  4  2  1
 ```
 
-### Step 6. Interpret  
-MSB = 1 → negative number.  
-Flip + add 1:  
-```
-00000000
-+1 = 00000001
-```
-So it’s -1.  
+That gives another way to decode a pattern without first taking its magnitude.
 
-**Answer: -1**
+Example:
 
----
-
-## MSB as the Sign Bit
-
-In 8-bit two’s complement:  
-- MSB = `0` → number is positive (0 to +127).  
-- MSB = `1` → number is negative (-128 to -1).
-
-Examples:  
-- `00001001` = +9  
-- `11111000` = -8  
-- `11111111` = -1  
-
----
-
-## Two’s Complement Table (+15 to -15)
-
-```
-Decimal    Binary
--------    --------
-+15        00001111
-+14        00001110
-+13        00001101
-+12        00001100
-+11        00001011
-+10        00001010
- +9        00001001
- +8        00001000
- +7        00000111
- +6        00000110
- +5        00000101
- +4        00000100
- +3        00000011
- +2        00000010
- +1        00000001
-  0        00000000
- -1        11111111
- -2        11111110
- -3        11111101
- -4        11111100
- -5        11111011
- -6        11111010
- -7        11111001
- -8        11111000
- -9        11110111
--10        11110110
--11        11110101
--12        11110100
--13        11110011
--14        11110010
--15        11110001
+```text
+1111 1000
+= -128 + 64 + 32 + 16 + 8
+= -8
 ```
 
----
+[Back to top](#top) · [Topics index](README.md)
 
-## Converting Negative Numbers to Base 10
+<a id="how-it-works"></a>
+## 5. How it works
 
-### Example 1: `11111111`
-1. MSB = 1 → negative.  
-2. Flip: `00000000`  
-3. Add 1: `00000001`  
-**Answer: -1**
+<a id="negating-a-value"></a>
+### Form the negative of a value
 
-### Example 2: `11111000`
-1. MSB = 1 → negative.  
-2. Flip: `00000111`  
-3. Add 1: `00001000`  
-**Answer: -8**
+To negate a fixed-width binary value:
 
-### Example 3: `11110001`
-1. MSB = 1 → negative.  
-2. Flip: `00001110`  
-3. Add 1: `00001111`  
-**Answer: -15**
+1. invert every bit;
+2. add 1;
+3. keep only the selected width.
 
----
+Example: encode -5 in eight bits.
 
-### Shortcut Method
-Unsigned value – 256 = signed value (when MSB = 1).  
+```text
++5:      0000 0101
+invert:  1111 1010
+add 1:   1111 1011
+```
 
-Example: `11111000` = 248 unsigned.  
-248 – 256 = –8.  
+Therefore:
 
----
+```text
+1111 1011 = -5
+```
+
+<a id="why-addition-works"></a>
+### Why addition still works
+
+Add +5 and -5:
+
+```text
+  0000 0101
++ 1111 1011
+-----------
+1 0000 0000
+```
+
+The result is stored in eight bits, so the ninth carry bit is discarded:
+
+```text
+0000 0000
+```
+
+The fixed-width arithmetic naturally wraps modulo `2^N`.
+
+<a id="decode-negative"></a>
+### Decode a negative pattern
+
+Method 1: invert and add 1 to find the magnitude.
+
+```text
+1111 1000
+invert -> 0000 0111
+add 1 -> 0000 1000
+magnitude = 8
+result = -8
+```
+
+Method 2: use the unsigned value.
+
+For an N-bit pattern whose MSB is 1:
+
+```text
+signed value = unsigned value - 2^N
+```
+
+For `1111 1000`:
+
+```text
+248 - 256 = -8
+```
+
+<a id="signed-range"></a>
+### Signed range is asymmetric
+
+For eight bits:
+
+| Pattern | Signed value |
+| --- | ---: |
+| `0111 1111` | +127 |
+| `0000 0000` | 0 |
+| `1111 1111` | -1 |
+| `1000 0000` | -128 |
+
+There is one more negative value than positive because zero occupies one of the nonnegative patterns.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="worked-examples"></a>
+## 6. Worked examples
+
+<a id="nine-minus-eight"></a>
+### Worked example: 9 - 8
+
+**Known**
+
+```text
+9 = 0000 1001
+8 = 0000 1000
+```
+
+**Find**
+
+`9 - 8`.
+
+**Reasoning**
+
+Convert the subtraction to addition:
+
+```text
+9 - 8 = 9 + (-8)
+```
+
+Find -8:
+
+```text
+8:       0000 1000
+invert:  1111 0111
+add 1:   1111 1000
+```
+
+Add:
+
+```text
+  0000 1001
++ 1111 1000
+-----------
+1 0000 0001
+```
+
+Discard the carry outside the eight-bit width.
+
+**Result**
+
+```text
+0000 0001 = 1
+```
+
+<a id="eight-minus-nine"></a>
+### Worked example: 8 - 9
+
+**Known**
+
+```text
+8 = 0000 1000
+9 = 0000 1001
+```
+
+**Reasoning**
+
+```text
+8 - 9 = 8 + (-9)
+```
+
+Find -9:
+
+```text
+9:       0000 1001
+invert:  1111 0110
+add 1:   1111 0111
+```
+
+Add:
+
+```text
+  0000 1000
++ 1111 0111
+-----------
+  1111 1111
+```
+
+Decode `1111 1111`.
+
+**Result**
+
+```text
+1111 1111 = -1
+```
+
+<a id="range-example"></a>
+### Worked example: detect an out-of-range result
+
+In signed 8-bit arithmetic:
+
+```text
+100 + 40 = 140
+```
+
+But +140 is outside the representable range of -128 to +127.
+
+If the arithmetic is forced into eight bits, the stored bit pattern wraps. That stored pattern should not be mistaken for the mathematically correct signed result.
+
+The general lesson is:
+
+> A valid bit pattern can still represent the wrong mathematical answer when the true result is outside the allowed range.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="apply-verify-troubleshoot"></a>
+## 7. Apply, verify, and troubleshoot
+
+When signed results look surprising, check these in order:
+
+1. What bit width is being used?
+2. Is the value supposed to be signed or unsigned?
+3. Is the true mathematical result inside the signed range?
+4. Did a carry leave the fixed-width result?
+5. Did the sign change unexpectedly because of overflow?
+6. Are you interpreting a register or field that is actually unsigned?
+
+Do not assume that a high MSB always means “negative.” That interpretation applies only when the field is defined as a signed two's-complement integer.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="practice"></a>
+## 8. Practice
+
+1. State the signed range of an 8-bit two's-complement value.
+2. State the signed range of a 16-bit two's-complement value.
+3. Encode -12 in eight bits.
+4. Decode `1110 1101` as an 8-bit two's-complement value.
+5. Compute `14 - 9` using eight-bit two's-complement addition.
+6. Compute `9 - 14` using eight-bit two's-complement addition.
+7. Why is `1000 0000` equal to -128 rather than “negative zero”?
+8. Why can the same pattern `1111 1011` mean 251 in one context and -5 in another?
+9. Is +150 representable in signed 8-bit two's complement? Explain.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="answer-key"></a>
+## 9. Answer key
+
+1. -128 through +127.
+2. -32768 through +32767.
+3. +12 = `0000 1100`; invert and add 1 -> `1111 0100`.
+4. Unsigned value 237; `237 - 256 = -19`.
+5. -9 = `1111 0111`; adding to 14 gives `0000 0101` after discarding the carry, so the result is +5.
+6. -14 = `1111 0010`; adding to 9 gives `1111 1011`, which is -5.
+7. Two's complement has only one zero, `0000 0000`. `1000 0000` has the signed weight -128.
+8. The bits do not define signedness by themselves. The surrounding data type or hardware definition supplies the interpretation.
+9. No. Signed 8-bit two's complement stops at +127.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="retrieval-check"></a>
+## 10. What you should be able to explain without notes
+
+You should be able to:
+
+- derive the signed range from the bit width;
+- encode and decode a negative value;
+- explain why invert-plus-one produces the additive inverse;
+- perform subtraction through addition;
+- explain why carry out is discarded at fixed width;
+- recognize when a true result is outside the representable signed range;
+- distinguish signed interpretation from the underlying stored bit pattern.
+
+[Back to top](#top) · [Topics index](README.md)
+
+<a id="references"></a>
+## 11. References
+
+- Microchip Technology Inc., *PICmicro Mid-Range MCU Family Reference Manual*, DS33023A — https://ww1.microchip.com/downloads/en/DeviceDoc/33023A.pdf
+  - Used for: course application context involving the PIC mid-range ALU, arithmetic instructions, and status behavior.
+
+- Microchip Technology Inc., *PIC16F882/883/884/886/887 Data Sheet*, DS40001291H — https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/40001291H.pdf
+  - Used for: PIC16F883 instruction-set and STATUS-register context.
+
+### Further reading
+
+- Wikipedia, *Two's complement* — https://en.wikipedia.org/wiki/Two%27s_complement
+  - Supplemental visual and mathematical overview of fixed-width two's-complement representation.
+
+[Back to top](#top) · [Topics index](README.md)
